@@ -11,3 +11,6 @@ dist/
 config.json
 .env
 *.history
+
+# per-TV records written by tools/install.sh
+tools/.previous-home.*
