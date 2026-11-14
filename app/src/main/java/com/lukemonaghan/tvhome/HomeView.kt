@@ -60,6 +60,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val prefs = ctx.getSharedPreferences("home", Context.MODE_PRIVATE)
     private var look = runCatching { Look.valueOf(prefs.getString("look", null) ?: "NIGHT") }.getOrDefault(Look.NIGHT)
     private var sceneBmp: Bitmap? = null
+    private var prevBmp: Bitmap? = null      // the scene fading out
+    private var fadeStart = 0L
+    private var shownId = ""                 // the scene sceneBmp holds
+    private var sceneIdx = 0
     private var sceneKey = ""
     private var glassBmp: Bitmap? = null
     private var glassKey = ""
@@ -89,6 +93,21 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val rect = RectF()
     private val clip = Path()
 
+    /** The scenes the household has on, in couch-tv's order (Home settings, Look and scenes). */
+    private fun scenes(): List<SceneRenderer.Spec> {
+        val on = prefs.getString("scenes", null)?.split(',')
+        return SceneRenderer.ALL.filter { on == null || it.id in on }.ifEmpty { listOf(SceneRenderer.NIGHT) }
+    }
+    private fun scene(): SceneRenderer.Spec = scenes().let { it[sceneIdx % it.size] }
+
+    /** Every few seconds the next scene: it is drawn off the main thread, then fades in over 1.6 s. */
+    private val rotate = object : Runnable {
+        override fun run() {
+            if (look != Look.OLED && scenes().size > 1 && mode != Mode.SETTINGS) { sceneIdx = (sceneIdx + 1) % scenes().size; invalidate() }
+            main.postDelayed(this, prefs.getInt("sceneSeconds", 20) * 1000L)
+        }
+    }
+
     private val minuteTick = object : Runnable {
         override fun run() {
             invalidate()
@@ -100,11 +119,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     init {
         isFocusable = true
         isFocusableInTouchMode = true
-        text.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); requestFocus(); minuteTick.run() }
-    override fun onDetachedFromWindow() { main.removeCallbacks(minuteTick); super.onDetachedFromWindow() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); requestFocus(); minuteTick.run(); main.postDelayed(rotate, prefs.getInt("sceneSeconds", 20) * 1000L) }
+    override fun onDetachedFromWindow() { main.removeCallbacks(minuteTick); main.removeCallbacks(rotate); super.onDetachedFromWindow() }
 
     // ------------------------------------------------------------------ what the Activity calls
 
@@ -317,22 +335,28 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         weather.refresh()
         val tx = clockText(cal); val dt = dateText(cal); val wx = weather.text()
         val dim = SceneRenderer.isDim(cal.get(Calendar.HOUR_OF_DAY))
-        val key = if (look == Look.NIGHT) "N|$tx|$dt|$wx|$dim|${width}x$height" else "C|$dim|${width}x$height"
+        val sp = scene()
+        val key = if (look == Look.NIGHT) "N|${sp.id}|$tx|$dt|$wx|$dim|${width}x$height" else "C|${sp.id}|$dim|${width}x$height"
         if (key == sceneKey) return
         sceneBusy = true
         val w = width; val h = height; val lk = look
-        val needGlass = lk == Look.NIGHT && glassKey != "$dim|${w}x$h"
+        val needGlass = lk == Look.NIGHT && glassKey != "${sp.id}|$dim|${w}x$h"
         worker.execute {
             val bmp = runCatching {
-                if (lk == Look.NIGHT) SceneRenderer.render(context, SceneRenderer.NIGHT, tx, dt, wx, w, h, dim)
-                else SceneRenderer.photoOnly(context, SceneRenderer.NIGHT, w, h, if (dim) 0.4f else 0.55f)
+                if (lk == Look.NIGHT) SceneRenderer.render(context, sp, tx, dt, wx, w, h, dim)
+                else SceneRenderer.photoOnly(context, sp, w, h, if (dim) 0.4f else 0.55f)
             }.getOrNull()
-            val glass = if (needGlass) runCatching { SceneRenderer.glassBase(context, SceneRenderer.NIGHT, w, h, dim) }.getOrNull() else null
+            val glass = if (needGlass) runCatching { SceneRenderer.glassBase(context, sp, w, h, dim) }.getOrNull() else null
             main.post {
                 sceneBusy = false
-                if (glass != null) { val og = glassBmp; glassBmp = glass; glassKey = "$dim|${w}x$h"; og?.recycle() }
-                if (bmp != null && lk == look) { val old = sceneBmp; sceneBmp = bmp; sceneKey = key; old?.recycle(); invalidate() }
-                else bmp?.recycle()
+                if (glass != null) { val og = glassBmp; glassBmp = glass; glassKey = "${sp.id}|$dim|${w}x$h"; og?.recycle() }
+                if (bmp != null && lk == look) {
+                    val old = sceneBmp
+                    if (old != null && shownId != sp.id) {   // a different scene: fade from the old one
+                        prevBmp?.recycle(); prevBmp = old; fadeStart = android.os.SystemClock.uptimeMillis()
+                    } else old?.recycle()
+                    sceneBmp = bmp; shownId = sp.id; sceneKey = key; invalidate()
+                } else bmp?.recycle()
             }
         }
     }
@@ -345,7 +369,13 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         } else {
             ensureScene()
             val b = sceneBmp
-            if (b != null) c.drawBitmap(b, 0f, 0f, null) else c.drawColor(ground)
+            val pv = prevBmp
+            if (pv != null && b != null) {
+                val f = ((android.os.SystemClock.uptimeMillis() - fadeStart) / 1600f).coerceIn(0f, 1f)
+                c.drawBitmap(pv, 0f, 0f, null)
+                paint.alpha = (f * 255).toInt(); c.drawBitmap(b, 0f, 0f, paint); paint.alpha = 255
+                if (f >= 1f) { pv.recycle(); prevBmp = null } else postInvalidateOnAnimation()
+            } else if (b != null) c.drawBitmap(b, 0f, 0f, null) else c.drawColor(ground)
             if (look == Look.NIGHT) {   // the scrim couch-tv puts under the dock: clear at 60% of the height, half black at the bottom
                 paint.style = Paint.Style.FILL
                 paint.shader = LinearGradient(0f, height * 0.6f, 0f, height.toFloat(), 0x00000000, 0x80000000.toInt(), Shader.TileMode.CLAMP)

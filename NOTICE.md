@@ -27,3 +27,5 @@ private to the machine they were made on.
   (no source photo, not a real place), copied unchanged. More scenes will be copied here as they are used.
 
 - Inter (static instances at weights 450, 500 and 600 cut from the variable font in couch-tv): SIL Open Font License 1.1, (c) The Inter Project Authors.
+
+- Scene art: the five scenes (night, golden, water, fog, dawn), their cut-outs and glass copies come from couch-tv (generated for that project, free to use per its CREDITS.md).

@@ -43,6 +43,8 @@ class SettingsScreen(
 
     // ------------------------------------------------------------------ the rows of each page
 
+    private fun enabledScenes(): List<String> = prefs.getString("scenes", null)?.split(',') ?: SceneRenderer.ALL.map { it.id }
+
     private fun rows(): List<Row> = when (pages[page]) {
         "Location" -> {
             val r = results
@@ -68,6 +70,19 @@ class SettingsScreen(
                 Row("Night", "Glass clock over the scene, Keep watching and a dock", check = look == "NIGHT") { pick("NIGHT") },
                 Row("OLED", "Pure black, a grid of your apps", check = look == "OLED") { pick("OLED") },
                 Row("Classic", "One photo and a grid of app banners", check = look == "CLASSIC") { pick("CLASSIC") },
+                Row("SCENES", header = true),
+            ) + SceneRenderer.ALL.map { sp ->
+                val on = enabledScenes()
+                Row(sp.label, check = sp.id in on) {
+                    val now = enabledScenes().toMutableList()
+                    if (sp.id in now) { if (now.size > 1) now.remove(sp.id) } else now.add(sp.id)
+                    prefs.edit().putString("scenes", SceneRenderer.ALL.filter { it.id in now }.joinToString(",") { it.id }).apply()
+                }
+            } + listOf(
+                Row("Each scene stays", "", "${prefs.getInt("sceneSeconds", 20)} seconds") {
+                    val opts = listOf(10, 20, 30, 60)
+                    prefs.edit().putInt("sceneSeconds", opts[(opts.indexOf(prefs.getInt("sceneSeconds", 20)) + 1) % opts.size]).apply()
+                },
                 Row("Clock", "", when (prefs.getInt("clock", 0)) { 1 -> "12 hour"; 2 -> "24 hour"; else -> "Follow the TV" }) {
                     prefs.edit().putInt("clock", (prefs.getInt("clock", 0) + 1) % 3).apply()
                 },
@@ -91,8 +106,8 @@ class SettingsScreen(
     fun key(code: Int): Boolean {
         val list = rows()
         when (code) {
-            KeyEvent.KEYCODE_DPAD_UP -> if (inRows) { if (row > 0) row-- } else if (page > 0) { page--; row = 0; results = null }
-            KeyEvent.KEYCODE_DPAD_DOWN -> if (inRows) { if (row < list.size - 1) row++ } else if (page < pages.size - 1) { page++; row = 0; results = null }
+            KeyEvent.KEYCODE_DPAD_UP -> if (inRows) { do { if (row > 0) row-- } while (list.getOrNull(row)?.header == true && row > 0) } else if (page > 0) { page--; row = 0; results = null }
+            KeyEvent.KEYCODE_DPAD_DOWN -> if (inRows) { do { if (row < list.size - 1) row++ } while (list.getOrNull(row)?.header == true && row < list.size - 1) } else if (page < pages.size - 1) { page++; row = 0; results = null }
             KeyEvent.KEYCODE_DPAD_RIGHT -> if (!inRows) { inRows = true; row = 0 }
             KeyEvent.KEYCODE_DPAD_LEFT -> if (inRows) back()
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
@@ -152,6 +167,11 @@ class SettingsScreen(
             val y = top + r * (rh + gap)
             val focus = inRows && i == row
             val rw = list[i]
+            if (rw.header) {
+                text.typeface = Fonts.semibold(ctx); text.textSize = 21 * u; text.letterSpacing = 0.08f; text.color = Color.argb(130, 255, 255, 255)
+                c.drawText(rw.title, 746 * u, y + 52 * u, text); text.letterSpacing = 0f
+                continue
+            }
             rect.set(720 * u, y, 1840 * u, y + rh)
             paint.style = Paint.Style.FILL
             paint.color = if (focus) Color.WHITE else Color.argb(24, 255, 255, 255)
