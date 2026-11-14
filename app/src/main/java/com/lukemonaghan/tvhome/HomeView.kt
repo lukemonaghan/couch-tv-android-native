@@ -28,6 +28,7 @@ import java.util.concurrent.Executors
 interface HomeActions {
     fun launch(pkg: String)
     fun openSettings()
+    fun askText(title: String, done: (String) -> Unit)
     fun openCard(pkg: String, intentUri: String?)
     fun uninstall(pkg: String)
     fun appInfo(pkg: String)
@@ -39,7 +40,7 @@ interface HomeActions {
  * The remote's D-pad drives everything through the key callbacks below.
  */
 class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
-    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS }
+    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS }
     /** Night: the scene with the big glass clock and the dock. OLED: a grid on pure black. Classic: a grid over the photo. */
     private enum class Look { NIGHT, OLED, CLASSIC }
 
@@ -65,6 +66,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private var sceneBusy = false
     private val worker = Executors.newSingleThreadExecutor()
 
+    private val weather = Weather(ctx) { sceneKey = ""; invalidate() }
+    private val settings by lazy { SettingsScreen(ctx, prefs, store, weather, act) { onSettingsChanged() } }
     private val icons = Icons(ctx) { invalidate() }
     private val watch = WatchNext(ctx) { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); if (cards().isEmpty() && mode == Mode.CARDS) mode = Mode.DOCK; invalidate() }
 
@@ -82,6 +85,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
         textAlign = Paint.Align.CENTER
     }
+    init { store.dockSize = prefs.getInt("dockSize", 10); store.reload() }
     private val rect = RectF()
     private val clip = Path()
 
@@ -126,6 +130,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         Mode.MENU -> { mode = menuFrom; invalidate(); true }
         Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, store.line + 1); invalidate(); true }
         Mode.CARDS -> { mode = Mode.DOCK; invalidate(); true }
+        Mode.SETTINGS -> { if (!settings.back()) { mode = Mode.DOCK; fi = store.line }; invalidate(); true }
         Mode.DOCK -> false
     }
 
@@ -162,6 +167,14 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         return super.onKeyUp(code, e)
     }
 
+    /** A setting changed: the look, the clock or the weather may have, so draw everything again. */
+    private fun onSettingsChanged() {
+        look = runCatching { Look.valueOf(prefs.getString("look", null) ?: "NIGHT") }.getOrDefault(Look.NIGHT)
+        sceneKey = ""
+        fi = fi.coerceIn(0, store.line + 1)
+        invalidate()
+    }
+
     private fun tick(sound: Int) { playSoundEffect(sound) }
 
     private fun cycleLook() {
@@ -175,8 +188,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val gridCols = 5
 
     private fun dir(code: Int) {
+        if (mode == Mode.SETTINGS) { settings.key(code); return }
         val dockCount = store.line + 2
         when (mode) {
+            Mode.SETTINGS -> {}
             Mode.DOCK -> if (look == Look.NIGHT) when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) { fi++; tick(SoundEffectConstants.NAVIGATION_RIGHT) }
@@ -240,9 +255,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         when (mode) {
             Mode.DOCK -> when {
                 fi < store.line -> launch(store.items[fi])
-                fi == store.line -> act.openSettings()
+                fi == store.line -> { settings.open(); mode = Mode.SETTINGS; invalidate() }
                 else -> { openMore(0); invalidate() }
             }
+            Mode.SETTINGS -> settings.key(KeyEvent.KEYCODE_DPAD_CENTER)
             Mode.CARDS -> cards().getOrNull(ci)?.let { act.openCard(it.pkg, it.intentUri) }
             Mode.MORE -> store.items.getOrNull(mi)?.let { launch(it) }
             Mode.MENU -> chooseMenu()
@@ -288,8 +304,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { sceneKey = ""; super.onSizeChanged(w, h, ow, oh) }
 
-    private fun clockText(cal: Calendar) = DateFormat.format(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm", cal).toString()
-    private val weather = Weather(ctx) { sceneKey = ""; invalidate() }
+    private fun clockText(cal: Calendar): String {
+        val h24 = when (prefs.getInt("clock", 0)) { 1 -> false; 2 -> true; else -> DateFormat.is24HourFormat(context) }
+        return DateFormat.format(if (h24) "HH:mm" else "h:mm", cal).toString()
+    }
     private fun dateText(cal: Calendar): String = DateFormat.format("EEEE d MMMM", cal).toString()
 
     /** Keeps the scene bitmap current: once a minute for Night (the clock is in it), once for Classic. Off the main thread. */
@@ -321,6 +339,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     override fun onDraw(c: Canvas) {
         val u = height / 1080f
+        if (mode == Mode.SETTINGS) { settings.draw(c, width, height); return }
         if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || look == Look.OLED) {
             c.drawColor(if (look == Look.OLED && mode != Mode.MORE) Color.BLACK else ground)
         } else {

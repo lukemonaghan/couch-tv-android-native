@@ -26,13 +26,41 @@ class Weather(ctx: Context, private val onChange: () -> Unit) {
         get() = prefs.getBoolean("fahrenheit", false)
         set(v) { prefs.edit().putBoolean("fahrenheit", v).apply(); onChange() }
 
-    fun setPlace(lat: Double, lon: Double) {
-        prefs.edit().putFloat("lat", lat.toFloat()).putFloat("lon", lon.toFloat()).apply()
-        lastTry = 0L; refresh()
+    val placeName: String get() = prefs.getString("place", "") ?: ""
+    var enabled: Boolean
+        get() = prefs.getBoolean("weatherOn", true)
+        set(v) { prefs.edit().putBoolean("weatherOn", v).apply(); onChange() }
+
+    fun setPlace(lat: Double, lon: Double, name: String = "") {
+        prefs.edit().putFloat("lat", lat.toFloat()).putFloat("lon", lon.toFloat()).putString("place", name).apply()
+        tempC = null; lastTry = 0L; refresh(); onChange()
+    }
+
+    class Place(val name: String, val detail: String, val lat: Double, val lon: Double)
+
+    /** Open-Meteo's place search (free, no key). [done] gets the matches on the main thread; empty when there are none or no network. */
+    fun search(query: String, done: (List<Place>) -> Unit) {
+        worker.execute {
+            val found = runCatching {
+                val u = URL("https://geocoding-api.open-meteo.com/v1/search?count=8&format=json&name=" + java.net.URLEncoder.encode(query, "UTF-8"))
+                val cn = u.openConnection() as HttpURLConnection
+                cn.connectTimeout = 8000; cn.readTimeout = 8000
+                try {
+                    val arr = JSONObject(cn.inputStream.bufferedReader().readText()).optJSONArray("results")
+                    (0 until (arr?.length() ?: 0)).map { i ->
+                        val o = arr!!.getJSONObject(i)
+                        Place(o.getString("name"), listOf(o.optString("admin1"), o.optString("country")).filter { it.isNotEmpty() }.joinToString(", "),
+                            o.getDouble("latitude"), o.getDouble("longitude"))
+                    }
+                } finally { cn.disconnect() }
+            }.getOrDefault(emptyList())
+            main.post { done(found) }
+        }
     }
 
     /** "22°" (or "72°F"), or empty while unknown. */
     fun text(): String {
+        if (!enabled) return ""
         val c = tempC ?: return ""
         return if (fahrenheit) "${Math.round(c * 9.0 / 5 + 32)}°F" else "$c°"
     }

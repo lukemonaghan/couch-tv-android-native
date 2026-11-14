@@ -119,6 +119,20 @@ class MainActivity : Activity(), HomeActions {
         launch(pkg)
     }
 
+    /** A small text box (Android's own keyboard) for the place search. */
+    override fun askText(title: String, done: (String) -> Unit) {
+        val box = android.widget.EditText(this).apply { setSingleLine(); imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH }
+        val dialog = android.app.AlertDialog.Builder(this).setTitle(title).setView(box)
+            .setPositiveButton("Search") { _, _ -> box.text.toString().trim().takeIf { it.isNotEmpty() }?.let(done) }
+            .setNegativeButton("Cancel", null).create()
+        // the keyboard's own search key does the same as the Search button
+        box.setOnEditorActionListener { _, _, _ ->
+            box.text.toString().trim().takeIf { it.isNotEmpty() }?.let(done)
+            dialog.dismiss(); true
+        }
+        dialog.show()
+    }
+
     override fun openSettings() {
         FireWatch.allowSettingsNow()   // so the Home button watch leaves Settings alone on a Fire TV
         start(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK))
