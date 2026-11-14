@@ -41,6 +41,7 @@ class MainActivity : Activity(), HomeActions {
         FireWatch.ensure(this)   // only once a computer has granted WRITE_SECURE_SETTINGS over ADB
         main.postDelayed({ FireWatch.rebindIfUnbound(applicationContext) }, 10_000L)   // listed but not bound after a force-stop
         watchPackages()
+        askTvListings()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -73,6 +74,20 @@ class MainActivity : Activity(), HomeActions {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { if (::home.isInitialized) home.back() }
 
+    /** Asks once for the Watch Next list (Keep watching). Without it Android answers with nothing. A computer can also grant it over ADB. */
+    private fun askTvListings() {
+        if (checkSelfPermission(WatchNext.READ_TV) == android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val p = getSharedPreferences("home", MODE_PRIVATE)
+        if (p.getBoolean("askedTv", false)) return
+        p.edit().putBoolean("askedTv", true).apply()
+        runCatching { requestPermissions(arrayOf(WatchNext.READ_TV), 77) }
+    }
+
+    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
+        super.onRequestPermissionsResult(code, perms, res)
+        if (::home.isInitialized) home.refresh()
+    }
+
     private fun watchPackages() {
         val f = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED); addAction(Intent.ACTION_PACKAGE_REMOVED); addAction(Intent.ACTION_PACKAGE_CHANGED)
@@ -89,6 +104,19 @@ class MainActivity : Activity(), HomeActions {
     override fun launch(pkg: String) {
         val i = packageManager.getLeanbackLaunchIntentForPackage(pkg) ?: packageManager.getLaunchIntentForPackage(pkg) ?: return
         start(i)
+    }
+
+    /** A Keep watching card: the app's own link for the show, only ever to the app that owns it, else just the app. */
+    override fun openCard(pkg: String, intentUri: String?) {
+        if (intentUri != null) {
+            val i = runCatching { Intent.parseUri(intentUri, Intent.URI_INTENT_SCHEME) }.getOrNull()
+            if (i != null) {
+                if (i.component != null && i.component!!.packageName != pkg) i.component = null
+                i.`package` = pkg; i.selector = null
+                if (i.resolveActivity(packageManager) != null && start(i)) return
+            }
+        }
+        launch(pkg)
     }
 
     override fun openSettings() {

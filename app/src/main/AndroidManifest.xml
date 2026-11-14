@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Holding OK on an app, "Uninstall": lets this app open Android's remove dialog, which always asks first. -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />

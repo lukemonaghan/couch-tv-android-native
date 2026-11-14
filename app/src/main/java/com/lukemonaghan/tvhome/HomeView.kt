@@ -28,6 +28,7 @@ import java.util.concurrent.Executors
 interface HomeActions {
     fun launch(pkg: String)
     fun openSettings()
+    fun openCard(pkg: String, intentUri: String?)
     fun uninstall(pkg: String)
     fun appInfo(pkg: String)
 }
@@ -38,7 +39,7 @@ interface HomeActions {
  * The remote's D-pad drives everything through the key callbacks below.
  */
 class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
-    private enum class Mode { DOCK, MORE, MENU, MOVING }
+    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS }
     /** Night: the scene with the big glass clock and the dock. OLED: a grid on pure black. Classic: a grid over the photo. */
     private enum class Look { NIGHT, OLED, CLASSIC }
 
@@ -52,6 +53,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private var menuIndex = 0       // the app (index into store.items) the menu is about
     private var movingIndex = 0
     private var longHandled = false
+    private var ci = 0              // focus in Keep watching
     private var homeRow = 0         // first visible row of the home grid (OLED and Classic)
 
     private val prefs = ctx.getSharedPreferences("home", Context.MODE_PRIVATE)
@@ -64,6 +66,11 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val worker = Executors.newSingleThreadExecutor()
 
     private val icons = Icons(ctx) { invalidate() }
+    private val watch = WatchNext(ctx) { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); if (cards().isEmpty() && mode == Mode.CARDS) mode = Mode.DOCK; invalidate() }
+
+    /** Keep watching: the Watch Next list. With the "demoCards" pref set (screenshots) two made-up shows stand in. */
+    private fun cards(): List<Card> =
+        if (watch.cards.isEmpty() && prefs.getBoolean("demoCards", false)) DEMO else watch.cards
     private val main = Handler(Looper.getMainLooper())
 
     private val ground = Color.parseColor("#0D1E19")
@@ -103,6 +110,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     /** The app list changed (a package came or went, or the home came back to the front). */
     fun refresh() {
         store.reload()
+        watch.reload()
         fi = fi.coerceIn(0, store.line + 1)
         mi = mi.coerceIn(0, maxOf(0, store.items.size - 1))
         if (mode == Mode.MOVING && movingIndex >= store.line) mode = Mode.DOCK
@@ -110,13 +118,14 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     /** The TV is short of memory: drop the pictures, they are drawn again when needed. */
-    fun trim() { icons.clear() }
+    fun trim() { icons.clear(); watch.clear() }
 
     /** Back: one step out of whatever is open. False when the home is already at its top level. */
     fun back(): Boolean = when (mode) {
         Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate(); true }
         Mode.MENU -> { mode = menuFrom; invalidate(); true }
         Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, store.line + 1); invalidate(); true }
+        Mode.CARDS -> { mode = Mode.DOCK; invalidate(); true }
         Mode.DOCK -> false
     }
 
@@ -171,6 +180,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Mode.DOCK -> if (look == Look.NIGHT) when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) { fi++; tick(SoundEffectConstants.NAVIGATION_RIGHT) }
+                KeyEvent.KEYCODE_DPAD_UP -> if (cards().isNotEmpty()) { mode = Mode.CARDS; ci = ci.coerceIn(0, cards().size - 1) }
                 KeyEvent.KEYCODE_DPAD_DOWN -> openMore(if (fi < store.line) fi else 0)
             } else {
                 val before = fi
@@ -181,6 +191,16 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                     KeyEvent.KEYCODE_DPAD_DOWN -> if (fi + gridCols < dockCount) fi += gridCols else if (fi / gridCols == (dockCount - 1) / gridCols) openMore(if (fi < store.line) fi else 0) else fi = dockCount - 1
                 }
                 if (fi != before) tick(SoundEffectConstants.NAVIGATION_DOWN)
+            }
+            Mode.CARDS -> {
+                val n = cards().size
+                val before = ci
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ci > 0) ci--
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (ci < n - 1) ci++
+                    KeyEvent.KEYCODE_DPAD_DOWN -> mode = Mode.DOCK
+                }
+                if (ci != before) tick(SoundEffectConstants.NAVIGATION_RIGHT)
             }
             Mode.MORE -> {
                 val before = mi
@@ -223,6 +243,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 fi == store.line -> act.openSettings()
                 else -> { openMore(0); invalidate() }
             }
+            Mode.CARDS -> cards().getOrNull(ci)?.let { act.openCard(it.pkg, it.intentUri) }
             Mode.MORE -> store.items.getOrNull(mi)?.let { launch(it) }
             Mode.MENU -> chooseMenu()
             Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate() }
@@ -316,8 +337,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         drawClock(c, u)
         when (mode) {
             Mode.MORE -> drawMore(c, u)
-            Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else drawDock(c, u); drawMenu(c, u) }
-            else -> drawDock(c, u)
+            Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else { drawCards(c, u); drawDock(c, u) }; drawMenu(c, u) }
+            else -> { drawCards(c, u); drawDock(c, u) }
         }
     }
 
@@ -346,7 +367,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val pl = (width - pw) / 2f
         val pt = height - 46 * u - ph
         glass(c, pl, pt, pl + pw, pt + ph, 46 * u)
-        val focus = if (mode == Mode.MOVING) movingIndex else fi
+        val focus = if (mode == Mode.MOVING) movingIndex else if (mode == Mode.CARDS) -1 else fi
         for (pass in 0..1) for (i in 0 until n) {
             if ((i == focus) != (pass == 1)) continue
             nightIcon(c, u, pl + padX + i * (tw + gap), pt + padY, tw, i, i == focus, mode == Mode.MOVING)
@@ -354,6 +375,75 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** Night's Keep watching: a heading and glass cards, 520 x 141, 22 apart, from 80 px in. Three fit; the row slides to keep focus in view. */
+    private fun drawCards(c: Canvas, u: Float) {
+        if (look != Look.NIGHT) return
+        val list = cards()
+        if (list.isEmpty()) return
+        text.typeface = Fonts.semibold(context); text.textAlign = Paint.Align.LEFT
+        text.textSize = 25 * u; text.color = Color.argb(199, 255, 255, 255)
+        c.drawText("Keep watching", 80 * u, 640 * u + 27 * u, text)
+        text.color = Color.WHITE
+        val cw = 520 * u; val gap = 22 * u; val top = 692 * u; val ch = 141 * u
+        val first = if (mode == Mode.CARDS) maxOf(0, ci - 2) else 0
+        for (pass in 0..1) for (i in first until list.size) {
+            val focused = mode == Mode.CARDS && i == ci
+            if (focused != (pass == 1)) continue
+            val x = 80 * u + (i - first) * (cw + gap)
+            if (x > width) continue
+            drawCard(c, u, list[i], x, top, cw, ch, focused)
+        }
+    }
+
+    private fun drawCard(c: Canvas, u: Float, card: Card, x: Float, y: Float, w: Float, h: Float, focused: Boolean) {
+        c.save()
+        if (focused) { c.translate(x + w / 2, y + h / 2); c.scale(1.05f, 1.05f); c.translate(-(x + w / 2), -(y + h / 2)) }
+        val r = 30 * u
+        if (focused) {
+            paint.style = Paint.Style.FILL; paint.color = Color.argb(90, 0, 0, 0)
+            rect.set(x, y + 12 * u, x + w, y + h + 12 * u)
+            c.drawRoundRect(rect, r, r, paint)
+            paint.color = Color.WHITE
+            rect.set(x - 3 * u, y - 3 * u, x + w + 3 * u, y + h + 3 * u)
+            c.drawRoundRect(rect, r + 3 * u, r + 3 * u, paint)
+        }
+        glass(c, x, y, x + w, y + h, r)
+        // the picture: 168 x 95, 16 px in, with 16 px corners
+        val tx = x + 16 * u; val ty = y + (h - 95 * u) / 2
+        rect.set(tx, ty, tx + 168 * u, ty + 95 * u)
+        paint.style = Paint.Style.FILL; paint.color = Color.argb(20, 255, 255, 255)
+        c.drawRoundRect(rect, 16 * u, 16 * u, paint)
+        watch.picture(card, (168 * u).toInt(), (95 * u).toInt())?.let { b ->
+            clip.reset(); clip.addRoundRect(rect, 16 * u, 16 * u, Path.Direction.CW)
+            c.save(); c.clipPath(clip); paint.alpha = 255; c.drawBitmap(b, null, rect, paint); c.restore()
+        }
+        // the words
+        val sx = tx + 168 * u + 20 * u
+        val sw = x + w - 16 * u - sx
+        val top = y + (h - 109 * u) / 2
+        text.textAlign = Paint.Align.LEFT
+        text.typeface = Fonts.medium(context); text.textSize = 19 * u; text.letterSpacing = 0.06f; text.color = Color.argb(148, 255, 255, 255)
+        val nap = TextUtils.ellipsize(card.app.uppercase(), text, sw, TextUtils.TruncateAt.END)
+        c.drawText(nap, 0, nap.length, sx, top + 18 * u, text)
+        text.letterSpacing = 0f
+        text.typeface = Fonts.semibold(context); text.textSize = 29 * u; text.color = Color.rgb(245, 245, 247)
+        val title = TextUtils.ellipsize(card.title, text, sw, TextUtils.TruncateAt.END)
+        c.drawText(title, 0, title.length, sx, top + 24 * u + 28 * u, text)
+        if (card.episode.isNotEmpty()) {
+            text.typeface = Fonts.regular(context); text.textSize = 21 * u; text.color = Color.argb(199, 255, 255, 255)
+            c.drawText(card.episode, sx, top + 60 * u + 22 * u, text)
+        }
+        text.color = Color.WHITE
+        if (card.progress > 0f) {
+            val by = top + 104 * u
+            paint.color = Color.argb(64, 255, 255, 255)
+            rect.set(sx, by, sx + sw, by + 5 * u); c.drawRoundRect(rect, 3 * u, 3 * u, paint)
+            paint.color = Color.WHITE
+            rect.set(sx, by, sx + sw * card.progress, by + 5 * u); c.drawRoundRect(rect, 3 * u, 3 * u, paint)
+        }
+        c.restore()
+    }
 
     /** couch-tv's glass: the blurred photo behind it, a plum tint, a pink hairline and a lighter line along the top edge. */
     private fun glass(c: Canvas, l: Float, t: Float, r: Float, b: Float, radius: Float) {
@@ -590,6 +680,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     private companion object {
+        val DEMO = listOf(
+            Card(-1, "com.disney.disneyplus", "Disney+", "The Bear", "S3 E2", null, 0.7f, null),
+            Card(-2, "au.net.abc.iview", "ABC iview", "Fisk", "S3 E1", null, 0.55f, null),
+        )
         const val COLS = 6
         const val MENU_OPTIONS = 3
     }
