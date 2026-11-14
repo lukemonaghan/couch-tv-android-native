@@ -264,7 +264,13 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { sceneKey = ""; super.onSizeChanged(w, h, ow, oh) }
 
     private fun clockText(cal: Calendar) = DateFormat.format(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm", cal).toString()
-    private fun dateText(cal: Calendar) = DateFormat.format("EEEE d MMMM", cal).toString()
+    private val weather = Weather(ctx) { sceneKey = ""; invalidate() }
+    private fun dateText(cal: Calendar): String {
+        weather.refresh()
+        val d = DateFormat.format("EEEE d MMMM", cal).toString()
+        val w = weather.text()
+        return if (w.isEmpty()) d else "$d  ·  $w"
+    }
 
     /** Keeps the scene bitmap current: once a minute for Night (the clock is in it), once for Classic. Off the main thread. */
     private fun ensureScene() {
