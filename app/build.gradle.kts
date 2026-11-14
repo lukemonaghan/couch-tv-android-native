@@ -4,10 +4,10 @@ plugins {
 }
 
 android {
-    namespace = "app.couchtv.launcher"
+    namespace = "com.lukemonaghan.tvhome"
     compileSdk = 34
     defaultConfig {
-        applicationId = "app.couchtv.launcher"   // same id as upstream so its apply.sh still works; do not install both on one TV
+        applicationId = "com.lukemonaghan.tvhome"
         minSdk = 23
         targetSdk = 34
         versionCode = 1

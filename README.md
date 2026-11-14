@@ -1,10 +1,12 @@
-# couch-tv-android-native
+# tvhome (couch-tv-android-native)
 
 A native Android TV home screen with no WebView and no libraries, aimed at slow, low-memory TVs
 (about 1.4 GB RAM). Inspired by [couch-tv](https://github.com/Seagey/couch-tv) by Seagey (MIT) and
 reusing parts of its code: see `NOTICE.md`.
 
 **Status:** just started. Today it builds a placeholder home that shows a clock.
+
+By lukemonaghan. App id `com.lukemonaghan.tvhome`.
 The plan and feature list are in [`note.md`](note.md).
 
 ## Build and run

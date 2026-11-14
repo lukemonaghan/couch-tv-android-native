@@ -1,4 +1,4 @@
-package app.couchtv.launcher
+package com.lukemonaghan.tvhome
 
 import android.content.ComponentName
 import android.content.Context
@@ -40,7 +40,7 @@ class TclPlaceholderInput : TvInputService() {
                 val me = ComponentName(c, TclPlaceholderInput::class.java)
                 if (c.packageManager.getComponentEnabledSetting(me) != PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
                     c.packageManager.setComponentEnabledSetting(me, PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
-                    Log.i("couchtv.tcl", "TCL TV: placeholder TV input switched on (issue #94)")
+                    Log.i("tvhome.tcl", "TCL TV: placeholder TV input switched on (issue #94)")
                 }
             }
         }

@@ -1,4 +1,4 @@
-package app.couchtv.launcher
+package com.lukemonaghan.tvhome
 
 import android.app.Activity
 import android.app.role.RoleManager
@@ -9,9 +9,9 @@ import android.os.Build
 import android.provider.Settings
 
 /**
- * Making couch-tv the home screen with no computer (issue #98). On a plain Android TV 10 or newer
+ * Making tvhome the home screen with no computer (issue #98). On a plain Android TV 10 or newer
  * Android has its own "default home app" request: it shows the system's own chooser and the person
- * picks couch-tv with the remote. Older Androids get the Home settings screen if there is one, else
+ * picks tvhome with the remote. Older Androids get the Home settings screen if there is one, else
  * Android's "Select a home app" chooser. On Google TV the TV's own launcher can still win the Home
  * key, so there the home page explains the Home button watch (set up by apply.sh) instead of
  * promising this. It never switches off or removes the TV's own launcher.
@@ -25,7 +25,7 @@ object HomeRole {
         c.packageManager.getPackageInfo(GOOGLE_TV_LAUNCHER, 0); true
     } catch (e: Exception) { false }
 
-    /** Whether couch-tv is the home the Home key opens right now. */
+    /** Whether tvhome is the home the Home key opens right now. */
     fun held(c: Context): Boolean {
         if (Build.VERSION.SDK_INT >= 29) {
             val rm = c.getSystemService(RoleManager::class.java)

@@ -1,4 +1,4 @@
-# couch-tv-android-native
+# tvhome (couch-tv-android-native)
 
 A native Android TV home screen, inspired by and reusing MIT code from couch-tv
 (https://github.com/Seagey/couch-tv). Android TV and Google TV only. Built with Claude Code.
@@ -9,6 +9,7 @@ Read `note.md` first: it has the feature list, the plan and the pitfalls.
   image or network libraries** unless the user agrees and the memory cost is measured. The target TVs
   have about 1.4 GB RAM, a 32-bit ARM chip and 250 to 450 MB free.
 - `reference/upstream/` is a read-only spec copied from couch-tv. Port from it, never compile it, never edit it.
+- Package and app id: `com.lukemonaghan.tvhome`. Author and owner: lukemonaghan.
 - Keep `NOTICE.md` and `LICENSE` accurate when copying more code from upstream.
 - minSdk 23, targetSdk 34. Anything newer than API 23 needs a fallback.
 - Never disable a TV's own home or setup app. It boot-loops some Google TVs.

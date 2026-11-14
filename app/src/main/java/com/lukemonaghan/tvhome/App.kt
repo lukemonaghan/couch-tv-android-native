@@ -1,4 +1,4 @@
-package app.couchtv.launcher
+package com.lukemonaghan.tvhome
 
 import android.app.Application
 

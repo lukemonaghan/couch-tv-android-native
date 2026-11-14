@@ -18,7 +18,7 @@ Measured on the Kogan (1.4 GB RAM, ~250 MB free): the couch-tv process held abou
 counting the shared WebView renderer. On the Hitachi the stock native home held about 249 MB, so a
 native home is not free either. A browser engine is the cost we can remove. Hypothesis: a native home
 that draws bitmaps and text with the Canvas can run in a few tens of MB. Verify with
-`dumpsys meminfo app.couchtv.launcher` before and after.
+`dumpsys meminfo com.lukemonaghan.tvhome` before and after.
 
 What is already native and should be kept almost as is: `FireWatch.kt` (Home button watch),
 `KeyWatch.kt`, `HomeRole.kt`, `CrashGuard.kt`, `Updater.kt`, `Doorbell.kt`, `HomeAssistant.kt`,
@@ -212,7 +212,7 @@ Android TV images exist for API 30 (the same Android 11 as both TVs) and API 34.
 
 The emulator is good for layout, focus, scenes, settings, languages and RTL, Watch Next and the install path.
 It is **not** good for speed or memory: a laptop is far faster than the TVs. Measure memory
-(`dumpsys meminfo app.couchtv.launcher`) on a real TV before calling anything done. It also lacks the
+(`dumpsys meminfo com.lukemonaghan.tvhome`) on a real TV before calling anything done. It also lacks the
 MediaTek inputs, CEC and the vendor quirks.
 
 ## Status (2026-11-14)
@@ -224,3 +224,9 @@ MediaTek inputs, CEC and the vendor quirks.
   `reference/upstream/kotlin/`. They reference `MainActivity` or a `WebView`, so each needs a small
   port before it moves into `app/`.
 - Next: the emulator, then step 1 of the work order (HOME activity, crash guard, FireWatch, config intent).
+
+## Identity (2026-11-14)
+Package and app id: `com.lukemonaghan.tvhome`. Owner: lukemonaghan. Because the id differs from upstream's
+`app.couchtv.launcher`, both apps can sit on one TV, but upstream's `apply.sh` and `undo.sh` will not find
+this app (they hard-code the old id). This project needs its own install and undo script. Until then, set it
+as the home by hand: `cmd package set-home-activity com.lukemonaghan.tvhome/.MainActivity`.
