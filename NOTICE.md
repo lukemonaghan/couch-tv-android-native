@@ -29,3 +29,4 @@ private to the machine they were made on.
 - Inter (static instances at weights 450, 500 and 600 cut from the variable font in couch-tv): SIL Open Font License 1.1, (c) The Inter Project Authors.
 
 - Scene art: the five scenes (night, golden, water, fog, dawn), their cut-outs and glass copies come from couch-tv (generated for that project, free to use per its CREDITS.md).
+- Classic look photos (tessellated-pavement, grose-valley, albury-storm, aresquiers-beach, vang-vieng-sunset) are from Wikimedia Commons under Creative Commons licences (CC BY-SA 2.5, 3.0, 4.0 and CC BY 4.0), as listed in couch-tv's `tv-home/web/backgrounds/CREDITS.md`: JJ Harrison, Diliff, Thennicke, Christian Ferrer and Basile Morin. The home shows each place and photographer under the clock.

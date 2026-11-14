@@ -66,6 +66,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private var fadeStart = 0L
     private var shownId = ""                 // the scene sceneBmp holds
     private var sceneIdx = 0
+    private var photoIdx = 0
     private var sceneKey = ""
     private var glassBmp: Bitmap? = null
     private var glassKey = ""
@@ -118,8 +119,9 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     /** Every few seconds the next scene: it is drawn off the main thread, then fades in over 1.6 s. */
     private val rotate = object : Runnable {
         override fun run() {
-            if (look != Look.OLED && scenes().size > 1 && mode != Mode.SETTINGS) { sceneIdx = (sceneIdx + 1) % scenes().size; invalidate() }
-            main.postDelayed(this, prefs.getInt("sceneSeconds", 20) * 1000L)
+            if (look == Look.NIGHT && scenes().size > 1 && mode != Mode.SETTINGS) { sceneIdx = (sceneIdx + 1) % scenes().size; invalidate() }
+            if (look == Look.CLASSIC && mode != Mode.SETTINGS) { photoIdx = (photoIdx + 1) % SceneRenderer.PHOTOS.size; invalidate() }
+            main.postDelayed(this, if (look == Look.CLASSIC) 90_000L else prefs.getInt("sceneSeconds", 20) * 1000L)
         }
     }
 
@@ -218,7 +220,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         invalidate()
     }
 
-    private val gridCols = 5
+    private val gridCols get() = if (look == Look.NIGHT) 5 else 8
 
     private fun dir(code: Int) {
         if (mode == Mode.SETTINGS) { settings.key(code); return }
@@ -243,7 +245,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 when (code) {
                     KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) fi--
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) fi++
-                    KeyEvent.KEYCODE_DPAD_UP -> if (fi >= gridCols) fi -= gridCols
+                    KeyEvent.KEYCODE_DPAD_UP -> if (fi >= gridCols) fi -= gridCols else if (cards().isNotEmpty()) { mode = Mode.CARDS; ci = ci.coerceIn(0, cards().size - 1) } else if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
                     KeyEvent.KEYCODE_DPAD_DOWN -> if (fi + gridCols < dockCount) fi += gridCols else if (fi / gridCols == (dockCount - 1) / gridCols) openMore(if (fi < store.line) fi else 0) else fi = dockCount - 1
                 }
                 if (fi != before) tick(SoundEffectConstants.NAVIGATION_DOWN)
@@ -368,7 +370,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val tx = clockText(cal); val dt = dateText(cal); val wx = weather.text()
         val dim = SceneRenderer.isDim(cal.get(Calendar.HOUR_OF_DAY))
         val sp = scene()
-        val key = if (look == Look.NIGHT) "N|${sp.id}|$tx|$dt|$wx|$dim|${width}x$height" else "C|${sp.id}|$dim|${width}x$height"
+        val ph = SceneRenderer.PHOTOS[photoIdx % SceneRenderer.PHOTOS.size]
+        val key = if (look == Look.NIGHT) "N|${sp.id}|$tx|$dt|$wx|$dim|${width}x$height" else "C|${ph.file}|$dim|${width}x$height"
         if (key == sceneKey) return
         sceneBusy = true
         val w = width; val h = height; val lk = look
@@ -376,7 +379,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         worker.execute {
             val bmp = runCatching {
                 if (lk == Look.NIGHT) SceneRenderer.render(context, sp, tx, dt, wx, w, h, dim)
-                else SceneRenderer.photoOnly(context, sp, w, h, if (dim) 0.4f else 0.55f)
+                else SceneRenderer.classic(context, ph, w, h, dim)
             }.getOrNull()
             val glass = if (needGlass) runCatching { SceneRenderer.glassBase(context, sp, w, h, dim) }.getOrNull() else null
             main.post {
@@ -384,10 +387,11 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 if (glass != null) { val og = glassBmp; glassBmp = glass; glassKey = "${sp.id}|$dim|${w}x$h"; og?.recycle() }
                 if (bmp != null && lk == look) {
                     val old = sceneBmp
-                    if (old != null && shownId != sp.id) {   // a different scene: fade from the old one
+                    val sid = if (lk == Look.NIGHT) sp.id else ph.file
+                    if (old != null && shownId != sid) {   // a different scene: fade from the old one
                         prevBmp?.recycle(); prevBmp = old; fadeStart = android.os.SystemClock.uptimeMillis()
                     } else old?.recycle()
-                    sceneBmp = bmp; shownId = sp.id; sceneKey = key; invalidate()
+                    sceneBmp = bmp; shownId = sid; sceneKey = key; invalidate()
                 } else bmp?.recycle()
             }
         }
@@ -423,17 +427,33 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         }
     }
 
-    /** OLED and Classic: a small clock and the date, top left. Night's big clock is part of the scene bitmap. */
+    /** Classic and OLED: the clock at the top right, the date, and under Classic the photo's place and photographer. */
     private fun drawClock(c: Canvas, u: Float) {
         if (mode == Mode.MORE || look == Look.NIGHT || (mode == Mode.MENU && menuFrom == Mode.MORE)) return
         val cal = Calendar.getInstance()
-        clockPaint.typeface = SceneRenderer.font(context)
-        clockPaint.textAlign = Paint.Align.LEFT
-        clockPaint.textSize = 150 * u
-        c.drawText(clockText(cal), 100 * u, 230 * u, clockPaint)
-        text.textAlign = Paint.Align.LEFT
-        text.textSize = 32 * u
-        c.drawText(dateText(cal), 104 * u, 285 * u, text)
+        val h24 = when (prefs.getInt("clock", 0)) { 1 -> false; 2 -> true; else -> DateFormat.is24HourFormat(context) }
+        val right = width - 80 * u
+        clockPaint.typeface = Fonts.light(context); clockPaint.color = Color.WHITE
+        clockPaint.textAlign = Paint.Align.RIGHT; clockPaint.textSize = 112 * u; clockPaint.letterSpacing = -0.035f
+        clockPaint.setShadowLayer(24 * u, 0f, 2 * u, Color.argb(89, 0, 0, 0))
+        var x = right
+        if (!h24) {
+            text.typeface = Fonts.regular(context); text.textSize = 36 * u; text.textAlign = Paint.Align.RIGHT
+            text.setShadowLayer(24 * u, 0f, 2 * u, Color.argb(89, 0, 0, 0))
+            val ampm = if (cal.get(Calendar.HOUR_OF_DAY) < 12) "am" else "pm"
+            c.drawText(ampm, right, 158 * u, text)
+            x = right - text.measureText(ampm) - 8 * u
+        }
+        c.drawText(clockText(cal), x, 158 * u, clockPaint)
+        clockPaint.clearShadowLayer(); clockPaint.letterSpacing = 0f
+        text.typeface = Fonts.semibold(context); text.textSize = 30 * u; text.textAlign = Paint.Align.RIGHT
+        c.drawText(dateText(cal), right, 241 * u, text)
+        if (look == Look.CLASSIC) {
+            val p = SceneRenderer.PHOTOS[photoIdx % SceneRenderer.PHOTOS.size]
+            text.typeface = Fonts.regular(context); text.textSize = 23 * u; text.color = Color.argb(168, 255, 255, 255)
+            c.drawText("${p.place}  ·  Photo: ${p.by}", right, 281 * u, text); text.color = Color.WHITE
+        }
+        text.clearShadowLayer(); text.textAlign = Paint.Align.LEFT
     }
 
     private fun drawDock(c: Canvas, u: Float) {
@@ -459,7 +479,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     /** Night's top row: the people switch at 80, 60 and the round quick buttons at the right edge. */
     private fun drawTop(c: Canvas, u: Float) {
-        if (look != Look.NIGHT) return
+        if (look != Look.NIGHT) { drawTopClassic(c, u); return }
         val items = topItems()
         if (items.isEmpty()) return
         val people = items.filter { it.kind == "person" }
@@ -507,6 +527,48 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 c.drawText(label, l + 24 * u + 18 * u + 28 * u, 112 * u, text); text.color = Color.WHITE
             }
             right = l - 16 * u
+        }
+    }
+
+    /** Classic and OLED: a flat people switch top left, and labelled quick buttons under the clock. */
+    private fun drawTopClassic(c: Canvas, u: Float) {
+        val items = topItems()
+        if (items.isEmpty()) return
+        val people = items.filter { it.kind == "person" }
+        val sel = prefs.getInt("person", 0).coerceIn(0, maxOf(0, people.size - 1))
+        text.typeface = Fonts.semibold(context); text.textSize = 23 * u; text.textAlign = Paint.Align.LEFT
+        if (people.isNotEmpty()) {
+            val pw = people.map { text.measureText(it.label) + 40 * u }
+            val total = pw.sum() + (people.size - 1) * 8 * u + 12 * u
+            paint.style = Paint.Style.FILL; paint.color = Color.argb(31, 255, 255, 255)
+            rect.set(80 * u, 60 * u, 80 * u + total, 108 * u); c.drawRoundRect(rect, 32 * u, 32 * u, paint)
+            var x = 86 * u
+            for (i in people.indices) {
+                val on = i == sel; val focus = mode == Mode.TOP && ti == i
+                rect.set(x, 66 * u, x + pw[i], 102 * u)
+                if (focus) { paint.color = Color.WHITE; val g = 3 * u; rect.inset(-g, -g); c.drawRoundRect(rect, 24 * u + g, 24 * u + g, paint); rect.inset(g, g) }
+                if (on || focus) { paint.color = if (on) Color.WHITE else Color.argb(41, 255, 255, 255); c.drawRoundRect(rect, 24 * u, 24 * u, paint) }
+                text.color = if (on) Color.rgb(17, 17, 17) else if (focus) Color.WHITE else Color.argb(199, 255, 255, 255)
+                c.drawText(people[i].label, x + 20 * u, 91 * u, text)
+                x += pw[i] + 8 * u
+            }
+            text.color = Color.WHITE
+        }
+        var right = width - 80 * u
+        for (q in items.filter { it.kind != "person" }.asReversed()) {
+            val idx = items.indexOf(q); val focus = mode == Mode.TOP && ti == idx
+            val set = q.kind == "sleep" && sleepOptions[sleepIdx] > 0
+            val label = when { q.kind == "look" -> "Look"; set -> "${sleepOptions[sleepIdx]} min"; else -> "Sleep timer" }
+            val w = 16 * u + 24 * u + 10 * u + text.measureText(label) + 20 * u
+            val l = right - w
+            rect.set(l, 312 * u, right, 360 * u)
+            paint.style = Paint.Style.FILL
+            paint.color = if (focus) Color.WHITE else if (set) Color.argb(168, 16, 16, 20) else Color.argb(117, 16, 16, 20)
+            c.drawRoundRect(rect, 32 * u, 32 * u, paint)
+            val fg = if (focus) Color.rgb(17, 17, 17) else Color.WHITE
+            quickIcon(c, u * 0.75f, q.kind, l + 16 * u + 12 * u, 336 * u, fg)
+            text.color = fg; c.drawText(label, l + 16 * u + 24 * u + 10 * u, 345 * u, text); text.color = Color.WHITE
+            right = l - 12 * u
         }
     }
 
@@ -697,33 +759,99 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT
     }
 
-    /** OLED and Classic: the dock's apps, Settings and More apps as a grid, five across. */
+    /** Classic and OLED: Keep watching as posters, then the dock's apps (banners), Settings and More apps as an 8 wide grid. */
     private fun drawHomeGrid(c: Canvas, u: Float) {
+        // Keep watching: 320 x 180 posters at 375, 40 apart, under a heading
+        val list = cards()
+        if (list.isNotEmpty()) {
+            text.typeface = Fonts.semibold(context); text.textSize = 30 * u; text.textAlign = Paint.Align.LEFT; text.color = Color.argb(209, 255, 255, 255)
+            c.drawText("Keep watching", 80 * u, 342 * u, text); text.color = Color.WHITE
+            val first = if (mode == Mode.CARDS) maxOf(0, ci - 4) else 0
+            for (pass in 0..1) for (i in first until list.size) {
+                val focused = mode == Mode.CARDS && i == ci
+                if (focused != (pass == 1)) continue
+                val x = 80 * u + (i - first) * 360 * u
+                if (x > width) continue
+                posterTile(c, u, list[i], x, 375 * u, focused)
+            }
+        }
+        // the apps: 184 x 104 banners, 40 apart across, 56 between rows, from 600
         val n = store.line + 2
-        val gap = 26 * u
-        val tw = 270 * u
-        val th = tw * 9f / 16f
-        val pitch = th + 62 * u
-        val top = 340 * u
-        val rows = ((height - top - 30 * u) / pitch).toInt().coerceAtLeast(1)
-        val focus = if (mode == Mode.MOVING) movingIndex else fi
-        val row = focus / gridCols
-        if (row < homeRow) homeRow = row
-        if (row >= homeRow + rows) homeRow = row - rows + 1
-        val x0 = (width - (gridCols * tw + (gridCols - 1) * gap)) / 2f
-        val dim = mode == Mode.MOVING
+        val tw = 184 * u; val th = 104 * u; val px = 224 * u; val py = 160 * u
+        val focus = if (mode == Mode.MOVING) movingIndex else if (mode == Mode.DOCK || mode == Mode.MENU) fi else -1
+        val rows = 3
+        if (focus >= 0) { val row = focus / gridCols; if (row < homeRow) homeRow = row; if (row >= homeRow + rows) homeRow = row - rows + 1 }
+        val topY = if (list.isEmpty()) 460 * u else 600 * u
         for (pass in 0..1) for (i in 0 until n) {
             if ((i == focus) != (pass == 1)) continue
             val r = i / gridCols - homeRow
             if (r < 0 || r >= rows) continue
-            val x = x0 + (i % gridCols) * (tw + gap)
-            val y = top + r * pitch
-            tile(c, u, x, y, tw, th, i, i == focus && mode != Mode.MENU || i == focus, dim && i != focus, if (dim && i == focus) -14 * u else 0f)
-            text.textSize = 24 * u
-            text.textAlign = Paint.Align.CENTER
-            val label = TextUtils.ellipsize(dockTitle(i), text, tw, TextUtils.TruncateAt.END)
-            c.drawText(label, 0, label.length, x + tw / 2, y + th + 38 * u, text)
+            classicApp(c, u, i, 80 * u + (i % gridCols) * px, topY + r * py, tw, th, i == focus, mode == Mode.MOVING && i != focus)
         }
+    }
+
+    private fun posterTile(c: Canvas, u: Float, card: Card, x: Float, y: Float, focused: Boolean) {
+        val w = 320 * u; val h = 180 * u; val r = 14 * u
+        c.save()
+        if (focused) { c.translate(x + w / 2, y + h / 2); c.scale(1.07f, 1.07f); c.translate(-(x + w / 2), -(y + h / 2)) }
+        rect.set(x, y, x + w, y + h)
+        if (focused) { paint.style = Paint.Style.FILL; paint.color = Color.argb(150, 0, 0, 0); rect.offset(0f, 18 * u); c.drawRoundRect(rect, r, r, paint); rect.offset(0f, -18 * u) }
+        paint.style = Paint.Style.FILL; paint.color = Color.rgb(28, 28, 33)
+        c.drawRoundRect(rect, r, r, paint)
+        clip.reset(); clip.addRoundRect(rect, r, r, Path.Direction.CW)
+        c.save(); c.clipPath(clip)
+        watch.picture(card, w.toInt(), h.toInt())?.let { b -> paint.alpha = 255; c.drawBitmap(b, null, rect, paint) }
+        if (card.progress > 0f) {
+            paint.color = Color.argb(115, 0, 0, 0); c.drawRect(x, y + h - 6 * u, x + w, y + h, paint)
+            paint.color = Color.rgb(245, 245, 247); c.drawRect(x, y + h - 6 * u, x + w * card.progress, y + h, paint)
+        }
+        c.restore()
+        store.items.firstOrNull { it.pkg == card.pkg }?.let { app ->   // the app's badge, bottom left
+            icons.square(app, (48 * u).toInt())?.let { b ->
+                rect.set(x + 16 * u, y + h - 20 * u - 48 * u, x + 64 * u, y + h - 20 * u)
+                clip.reset(); clip.addRoundRect(rect, 12 * u, 12 * u, Path.Direction.CW)
+                c.save(); c.clipPath(clip); c.drawBitmap(b, null, rect, paint); c.restore()
+            }
+        }
+        if (focused) { paint.style = Paint.Style.STROKE; paint.strokeWidth = 2 * u; paint.color = Color.argb(46, 255, 255, 255); rect.set(x, y, x + w, y + h); c.drawRoundRect(rect, r, r, paint); paint.style = Paint.Style.FILL }
+        c.restore()
+    }
+
+    private fun classicApp(c: Canvas, u: Float, index: Int, x: Float, y: Float, w: Float, h: Float, focused: Boolean, dim: Boolean) {
+        val app = if (index < store.line) store.items[index] else null
+        val r = 10 * u
+        c.save()
+        if (focused) { c.translate(x + w / 2, y + h / 2); c.scale(1.16f, 1.16f); c.translate(-(x + w / 2), -(y + h / 2)) }
+        rect.set(x, y, x + w, y + h)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(if (focused) 150 else 90, 0, 0, 0)
+        rect.offset(0f, if (focused) 24 * u else 8 * u); c.drawRoundRect(rect, r, r, paint); rect.offset(0f, if (focused) -24 * u else -8 * u)
+        clip.reset(); clip.addRoundRect(rect, r, r, Path.Direction.CW)
+        c.save(); c.clipPath(clip)
+        paint.alpha = if (dim) 120 else 255
+        if (app != null) {
+            paint.color = Color.rgb(28, 28, 33); c.drawRect(rect, paint)
+            icons.get(app, w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1))?.let { b -> paint.alpha = if (dim) 120 else 255; c.drawBitmap(b, null, rect, paint) }
+                ?: run { text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.textAlign = Paint.Align.CENTER
+                         val l = TextUtils.ellipsize(app.label, text, w - 20 * u, TextUtils.TruncateAt.END); c.drawText(l, 0, l.length, x + w / 2, y + h / 2 + 8 * u, text) }
+        } else {   // the house's own tiles: a dark gradient, the name or three dots
+            paint.shader = LinearGradient(x, y, x + w * 0.4f, y + h, Color.rgb(44, 44, 51), Color.rgb(26, 26, 31), Shader.TileMode.CLAMP)
+            c.drawRect(rect, paint); paint.shader = null
+            if (index == store.line) { text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.textAlign = Paint.Align.CENTER; c.drawText("Settings", x + w / 2, y + h / 2 + 8 * u, text) }
+            else glyph(c, u, x + w / 2, y + h / 2, 112 * u * 0.7f, false)
+        }
+        if (focused) { paint.alpha = 255; paint.style = Paint.Style.FILL; paint.color = Color.argb(46, 255, 255, 255)
+            val sx = x - w * 0.6f
+            paint.shader = LinearGradient(x + w * 0.2f, y, x + w * 0.8f, y + h, intArrayOf(0, Color.argb(51, 255, 255, 255), 0), floatArrayOf(0.35f, 0.5f, 0.65f), Shader.TileMode.CLAMP)
+            c.drawRect(rect, paint); paint.shader = null }
+        c.restore()
+        if (app != null && store.isNew(app.pkg)) { paint.alpha = 255; paint.color = Color.parseColor("#3D8BFF"); c.drawCircle(x + w - 12 * u, y + 12 * u, 6 * u, paint) }
+        if (focused) {
+            text.typeface = Fonts.semibold(context); text.textSize = 20 * u; text.textAlign = Paint.Align.CENTER
+            c.drawText(dockTitle(index), x + w / 2, y + h + 10 * u + 17 * u, text)
+        }
+        paint.alpha = 255
+        c.restore()
     }
 
     private fun dockTitle(i: Int): String = when {

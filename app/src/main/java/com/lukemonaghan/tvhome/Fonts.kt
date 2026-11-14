@@ -9,6 +9,7 @@ object Fonts {
     private fun load(ctx: Context, file: String, fallback: Typeface): Typeface =
         cache.getOrPut(file) { runCatching { Typeface.createFromAsset(ctx.assets, "fonts/$file.ttf") }.getOrDefault(fallback) }
 
+    fun light(ctx: Context) = load(ctx, "inter_light", Typeface.create("sans-serif-light", Typeface.NORMAL))
     fun regular(ctx: Context) = load(ctx, "inter_regular", Typeface.DEFAULT)
     fun medium(ctx: Context) = load(ctx, "inter_medium", Typeface.create("sans-serif-medium", Typeface.NORMAL))
     fun semibold(ctx: Context) = load(ctx, "inter_semibold", Typeface.create("sans-serif-medium", Typeface.BOLD))

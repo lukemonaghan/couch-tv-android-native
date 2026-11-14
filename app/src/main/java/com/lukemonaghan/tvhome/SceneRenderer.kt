@@ -195,14 +195,30 @@ object SceneRenderer {
         t.style = Paint.Style.FILL
     }
 
-    /** The Classic look's background: the scene photo alone, dimmed so the app tiles stand out. */
-    fun photoOnly(ctx: Context, spec: Spec, w: Int, h: Int, dim: Float = 0.55f): Bitmap {
+    class Photo(val file: String, val place: String, val by: String)
+    val PHOTOS = listOf(
+        Photo("tessellated-pavement", "Tessellated Pavement, Tasmania", "JJ Harrison"),
+        Photo("grose-valley", "Grose Valley, Blue Mountains", "Diliff"),
+        Photo("albury-storm", "Storm at sunset, Albury", "Thennicke"),
+        Photo("aresquiers-beach", "Aresquiers beach, France", "Christian Ferrer"),
+        Photo("vang-vieng-sunset", "Vang Vieng, Laos", "Basile Morin"),
+    )
+
+    /** The Classic look's background: one of the photos, dimmed at night, with couch-tv's scrim (dark at the top for the clock, much darker at the bottom for the apps). */
+    fun classic(ctx: Context, photo: Photo, w: Int, h: Int, dim: Boolean): Bitmap {
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
         val c = Canvas(out)
-        val bg = decode(ctx, "scenes/${spec.photo}.jpg", Bitmap.Config.RGB_565)
-        if (bg == null) { c.drawColor(Color.parseColor("#0D1E19")); return out }
-        c.drawBitmap(bg, null, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = brightness(dim) })
-        bg.recycle()
+        val bg = decode(ctx, "backgrounds/${photo.file}.jpg", Bitmap.Config.RGB_565)
+        if (bg == null) c.drawColor(Color.parseColor("#0D1E19"))
+        else {
+            c.drawBitmap(bg, null, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG).apply { if (dim) colorFilter = brightness(0.72f) })
+            bg.recycle()
+        }
+        val hh = h.toFloat()
+        c.drawRect(0f, 0f, w.toFloat(), hh, Paint().apply {
+            shader = LinearGradient(0f, 0f, 0f, hh, intArrayOf(Color.argb(128, 0, 0, 0), 0, 0), floatArrayOf(0f, 0.26f, 1f), Shader.TileMode.CLAMP) })
+        c.drawRect(0f, 0f, w.toFloat(), hh, Paint().apply {
+            shader = LinearGradient(0f, 0f, 0f, hh, intArrayOf(0, 0, Color.argb(128, 0, 0, 0), Color.argb(219, 0, 0, 0)), floatArrayOf(0f, 0.32f, 0.55f, 1f), Shader.TileMode.CLAMP) })
         return out
     }
 
