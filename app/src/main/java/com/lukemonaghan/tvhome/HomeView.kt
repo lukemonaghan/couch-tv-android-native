@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -56,6 +58,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private var look = runCatching { Look.valueOf(prefs.getString("look", null) ?: "NIGHT") }.getOrDefault(Look.NIGHT)
     private var sceneBmp: Bitmap? = null
     private var sceneKey = ""
+    private var glassBmp: Bitmap? = null
+    private var glassKey = ""
     private var sceneBusy = false
     private val worker = Executors.newSingleThreadExecutor()
 
@@ -65,7 +69,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val ground = Color.parseColor("#0D1E19")
     private val tileBg = Color.parseColor("#1A2B26")
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val text = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val text = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; typeface = Fonts.regular(ctx) }
     private val clockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
@@ -265,29 +269,29 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun clockText(cal: Calendar) = DateFormat.format(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm", cal).toString()
     private val weather = Weather(ctx) { sceneKey = ""; invalidate() }
-    private fun dateText(cal: Calendar): String {
-        weather.refresh()
-        val d = DateFormat.format("EEEE d MMMM", cal).toString()
-        val w = weather.text()
-        return if (w.isEmpty()) d else "$d  ·  $w"
-    }
+    private fun dateText(cal: Calendar): String = DateFormat.format("EEEE d MMMM", cal).toString()
 
     /** Keeps the scene bitmap current: once a minute for Night (the clock is in it), once for Classic. Off the main thread. */
     private fun ensureScene() {
         if (look == Look.OLED || width == 0 || sceneBusy) return
         val cal = Calendar.getInstance(Locale.getDefault())
-        val tx = clockText(cal); val dt = dateText(cal)
-        val key = if (look == Look.NIGHT) "N|$tx|$dt|${width}x$height" else "C|${width}x$height"
+        weather.refresh()
+        val tx = clockText(cal); val dt = dateText(cal); val wx = weather.text()
+        val dim = SceneRenderer.isDim(cal.get(Calendar.HOUR_OF_DAY))
+        val key = if (look == Look.NIGHT) "N|$tx|$dt|$wx|$dim|${width}x$height" else "C|$dim|${width}x$height"
         if (key == sceneKey) return
         sceneBusy = true
         val w = width; val h = height; val lk = look
+        val needGlass = lk == Look.NIGHT && glassKey != "$dim|${w}x$h"
         worker.execute {
             val bmp = runCatching {
-                if (lk == Look.NIGHT) SceneRenderer.render(context, SceneRenderer.NIGHT, tx, dt, w, h)
-                else SceneRenderer.photoOnly(context, SceneRenderer.NIGHT, w, h)
+                if (lk == Look.NIGHT) SceneRenderer.render(context, SceneRenderer.NIGHT, tx, dt, wx, w, h, dim)
+                else SceneRenderer.photoOnly(context, SceneRenderer.NIGHT, w, h, if (dim) 0.4f else 0.55f)
             }.getOrNull()
+            val glass = if (needGlass) runCatching { SceneRenderer.glassBase(context, SceneRenderer.NIGHT, w, h, dim) }.getOrNull() else null
             main.post {
                 sceneBusy = false
+                if (glass != null) { val og = glassBmp; glassBmp = glass; glassKey = "$dim|${w}x$h"; og?.recycle() }
                 if (bmp != null && lk == look) { val old = sceneBmp; sceneBmp = bmp; sceneKey = key; old?.recycle(); invalidate() }
                 else bmp?.recycle()
             }
@@ -332,23 +336,116 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun drawDock(c: Canvas, u: Float) {
         if (look != Look.NIGHT) { drawHomeGrid(c, u); return }
+        // couch-tv's Night dock: a glass pill, 7 rem icons 1.625 rem apart, 2.875 rem off the bottom
         val n = store.line + 2
-        val gap = 14 * u
-        val tw = minOf(170 * u, (width - 120 * u - (n - 1) * gap) / n)
-        val th = tw * 9f / 16f
-        val x0 = (width - (n * tw + (n - 1) * gap)) / 2f
-        val y = 680 * u
+        val fit = minOf(1f, (width - 80 * u) / (n * 138 * u + 30 * u))
+        val tw = 112 * u * fit; val gap = 26 * u * fit
+        val padX = 28 * u * fit; val padY = 22 * u * fit
+        val pw = n * tw + (n - 1) * gap + 2 * padX
+        val ph = tw + 2 * padY
+        val pl = (width - pw) / 2f
+        val pt = height - 46 * u - ph
+        glass(c, pl, pt, pl + pw, pt + ph, 46 * u)
         val focus = if (mode == Mode.MOVING) movingIndex else fi
-        val dim = mode == Mode.MOVING
-        for (i in 0 until n) {
-            if (i == focus) continue
-            tile(c, u, x0 + i * (tw + gap), y, tw, th, i, false, dim, 0f)
+        for (pass in 0..1) for (i in 0 until n) {
+            if ((i == focus) != (pass == 1)) continue
+            nightIcon(c, u, pl + padX + i * (tw + gap), pt + padY, tw, i, i == focus, mode == Mode.MOVING)
         }
-        tile(c, u, x0 + focus * (tw + gap), y, tw, th, focus, true, false, if (dim) -14 * u else 0f)
-        val label = dockTitle(focus)
-        text.textSize = 30 * u
-        text.textAlign = Paint.Align.CENTER
-        c.drawText(label, width / 2f, y + th + 80 * u, text)
+    }
+
+    private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** couch-tv's glass: the blurred photo behind it, a plum tint, a pink hairline and a lighter line along the top edge. */
+    private fun glass(c: Canvas, l: Float, t: Float, r: Float, b: Float, radius: Float) {
+        rect.set(l, t, r, b)
+        clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
+        c.save(); c.clipPath(clip)
+        glassBmp?.let { c.drawBitmap(it, 0f, 0f, null) }
+        glassPaint.style = Paint.Style.FILL; glassPaint.color = Color.argb(82, 30, 20, 28)
+        c.drawRect(rect, glassPaint)
+        c.restore()
+        val px = height / 1080f
+        glassPaint.style = Paint.Style.STROKE; glassPaint.strokeWidth = px
+        glassPaint.color = Color.argb(41, 255, 210, 220)
+        rect.inset(px / 2, px / 2)
+        c.drawRoundRect(rect, radius, radius, glassPaint)
+        glassPaint.color = Color.argb(36, 255, 220, 230)
+        c.save(); c.clipRect(l, t, r, t + radius)
+        rect.set(l + px / 2, t + px * 1.5f, r - px / 2, b)
+        c.drawRoundRect(rect, radius, radius, glassPaint)
+        c.restore()
+    }
+
+    private fun nightIcon(c: Canvas, u: Float, x: Float, y: Float, size: Float, index: Int, focused: Boolean, moving: Boolean) {
+        val app = if (index < store.line) store.items[index] else null
+        val radius = size * 0.265f
+        c.save()
+        val cx = x + size / 2; val cy = y + size / 2
+        if (focused) { c.translate(cx, cy - 10 * u * (size / (112 * u))); c.scale(1.16f, 1.16f); c.translate(-cx, -cy) }
+        rect.set(x, y, x + size, y + size)
+        if (focused) {   // the white ring and its shadow
+            paint.style = Paint.Style.FILL; paint.color = Color.argb(70, 0, 0, 0)
+            rect.offset(0f, 14 * u); rect.inset(-4 * u, -4 * u)
+            c.drawRoundRect(rect, radius + 4 * u, radius + 4 * u, paint)
+            rect.set(x - 4 * u, y - 4 * u, x + size + 4 * u, y + size + 4 * u)
+            paint.color = Color.WHITE
+            c.drawRoundRect(rect, radius + 4 * u, radius + 4 * u, paint)
+            rect.set(x, y, x + size, y + size)
+        }
+        paint.style = Paint.Style.FILL
+        paint.color = if (app != null) Color.rgb(42, 42, 48) else Color.argb(36, 255, 255, 255)
+        paint.alpha = if (moving && !focused) 178 else if (app != null) 255 else 36
+        c.drawRoundRect(rect, radius, radius, paint)
+        if (app != null) {
+            val bmp = icons.square(app, size.toInt().coerceAtLeast(1))
+            if (bmp != null) {
+                clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
+                c.save(); c.clipPath(clip)
+                paint.colorFilter = if (focused) null else dimFilter
+                paint.alpha = if (moving && !focused) 178 else 255
+                c.drawBitmap(bmp, null, rect, paint)
+                paint.colorFilter = null
+                c.restore()
+            } else {
+                text.textSize = size * 0.16f; text.textAlign = Paint.Align.CENTER; text.typeface = Fonts.semibold(context)
+                val l = TextUtils.ellipsize(app.label, text, size - 16 * u, TextUtils.TruncateAt.END)
+                c.drawText(l, 0, l.length, cx, cy + size * 0.06f, text)
+            }
+            if (store.isNew(app.pkg)) {
+                paint.color = Color.parseColor("#3D8BFF"); paint.alpha = 255
+                c.drawCircle(x + size - 10 * u, y + 10 * u, 6 * u, paint)
+            }
+        } else {
+            glyph(c, u, cx, cy, size, index == store.line)
+        }
+        if (focused) {
+            text.typeface = Fonts.semibold(context); text.textSize = 20 * u * (size / (112 * u)); text.textAlign = Paint.Align.CENTER
+            c.drawText(dockTitle(index), cx, y + size + 12 * u + text.textSize * 0.85f, text)
+        }
+        c.restore()
+    }
+
+    private val dimFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
+        .82f, 0f, 0f, 0f, 0f, 0f, .82f, 0f, 0f, 0f, 0f, 0f, .82f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)))
+
+    /** The gear and the three dots, drawn with strokes the way couch-tv's icons are (24 unit grid, 36 px, stroke 1.7). */
+    private fun glyph(c: Canvas, u: Float, cx: Float, cy: Float, size: Float, gear: Boolean) {
+        val k = 44f * u / 24f * (size / (112 * u))
+        paint.style = Paint.Style.STROKE; paint.color = Color.WHITE; paint.alpha = 255
+        paint.strokeWidth = 1.7f * k; paint.strokeCap = Paint.Cap.ROUND
+        if (gear) {
+            c.drawCircle(cx, cy, 3.1f * k, paint)
+            for (a in 0 until 8) {
+                val r = Math.toRadians(a * 45.0)
+                c.drawLine(cx + (7.4f * k * Math.cos(r)).toFloat(), cy + (7.4f * k * Math.sin(r)).toFloat(),
+                    cx + (9.2f * k * Math.cos(r)).toFloat(), cy + (9.2f * k * Math.sin(r)).toFloat(), paint)
+            }
+            c.drawCircle(cx, cy, 6.2f * k, paint)
+        } else {
+            paint.style = Paint.Style.FILL
+            for (d in -1..1) c.drawCircle(cx + d * 8.7f * k, cy, 2.3f * k, paint)
+        }
+        paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT
     }
 
     /** OLED and Classic: the dock's apps, Settings and More apps as a grid, five across. */

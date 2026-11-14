@@ -44,14 +44,37 @@ object SceneRenderer {
         rimStroke = Color.argb(128, 255, 215, 225), rimFill = Color.argb(15, 255, 200, 215),
     )
 
-    private var antonio: Typeface? = null
-    fun font(ctx: Context): Typeface =
-        antonio ?: runCatching { Typeface.createFromAsset(ctx.assets, "fonts/antonio_light.ttf") }
-            .getOrDefault(Typeface.create("sans-serif-condensed-light", Typeface.NORMAL)).also { antonio = it }
+    fun font(ctx: Context): Typeface = Fonts.antonio(ctx)
 
     /** Draws the scene at [w] x [h]. Call from a background thread. [time] is the clock text, [date] the date line. */
-    fun render(ctx: Context, spec: Spec, time: String, date: String, w: Int, h: Int): Bitmap {
+    /** After 9 pm and before 6 am couch-tv dims the photo to 72% and the clock with it. */
+    fun isDim(hour: Int) = hour >= 21 || hour < 6
+
+    /** The blurred photo with the glass panels' saturation, for the dock and cards to be cut out of. */
+    fun glassBase(ctx: Context, spec: Spec, w: Int, h: Int, dim: Boolean): Bitmap? {
+        // blur by shrinking: the photo decoded at 1/16 size and stretched back up smooths like a 28 px blur
+        val g = runCatching {
+            ctx.assets.open("scenes/${spec.photo}.jpg").use {
+                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = 16; inPreferredConfig = Bitmap.Config.RGB_565 })
+            }
+        }.getOrNull() ?: return null
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
+        val cm = ColorMatrix().apply { setSaturation(1.7f) }
+        val b = 1.06f * (if (dim) 0.72f else spec.photoBrightness)
+        cm.postConcat(ColorMatrix(floatArrayOf(b, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, 1f, 0f)))
+        val small = Bitmap.createScaledBitmap(g, g.width * 4, g.height * 4, true)   // a gentler second step
+        val gc = Canvas(out)
+        gc.drawBitmap(small, null, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(cm) })
+        // the home's own scrim sits between the photo and the glass: clear at 60% of the height, half black at the bottom
+        gc.drawRect(0f, h * 0.6f, w.toFloat(), h.toFloat(), Paint().apply {
+            shader = LinearGradient(0f, h * 0.6f, 0f, h.toFloat(), 0x00000000, 0x80000000.toInt(), Shader.TileMode.CLAMP) })
+        g.recycle(); small.recycle()
+        return out
+    }
+
+    fun render(ctx: Context, spec: Spec, time: String, date: String, wx: String, w: Int, h: Int, dim: Boolean): Bitmap {
         val s = h / 1080f
+        val photoB = if (dim) 0.72f else spec.photoBrightness
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
         val c = Canvas(out)
         val full = Rect(0, 0, w, h)
@@ -59,7 +82,7 @@ object SceneRenderer {
 
         // photo
         decode(ctx, "scenes/${spec.photo}.jpg", Bitmap.Config.RGB_565)?.let { bg ->
-            p.colorFilter = brightness(spec.photoBrightness)
+            p.colorFilter = brightness(photoB)
             c.drawBitmap(bg, null, full, p)
             bg.recycle()
         } ?: c.drawColor(Color.parseColor("#0D1E19"))
@@ -79,6 +102,8 @@ object SceneRenderer {
         val tb = Rect()
         t.getTextBounds(time, 0, time.length, tb)
         val box = RectF(cx + tb.left - 20 * s, baseline + fm.ascent - 20 * s, cx + tb.right + 20 * s, baseline + fm.descent + 20 * s)
+
+        val clockLayer = c.saveLayer(null, if (dim) Paint().apply { colorFilter = brightness(0.72f) } else null)
 
         // glass fill: the blurred copy of the photo, cut to the digits (a layer, masked with SRC_IN)
         decode(ctx, "scenes/${spec.photo}-glass.jpg", Bitmap.Config.RGB_565)?.let { glass ->
@@ -116,23 +141,28 @@ object SceneRenderer {
         t.style = Paint.Style.STROKE; t.strokeWidth = 1.44f * s; t.color = spec.rimStroke
         c.drawText(time, cx, baseline, t)
 
+        c.restoreToCount(clockLayer)
+
         // everything in front of the sky, over the digits
         if (spec.hasCutout) decode(ctx, "scenes/${spec.photo}-fg.webp", Bitmap.Config.ARGB_8888)?.let { fg ->
-            p.colorFilter = brightness(spec.photoBrightness)
+            p.colorFilter = brightness(photoB)
             c.drawBitmap(fg, null, full, p)
             fg.recycle()
         }
         p.colorFilter = null
 
-        // the date
+        // the date, then the weather a little dimmer. Inter 500 at 34 px, centred as one line.
         val d = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            textSize = 34 * s
-            textAlign = Paint.Align.CENTER
-            color = spec.dateColor
+            typeface = Fonts.medium(ctx); textSize = 34 * s; color = spec.dateColor
             setShadowLayer(18 * s, 0f, 2 * s, Color.argb(64, 0, 0, 0))
         }
-        c.drawText(date, cx, spec.dateTop * s + 30 * s, d)
+        val wp = Paint(d).apply { typeface = Fonts.regular(ctx); color = Color.argb(199, 255, 232, 238) }
+        val gap = if (wx.isEmpty()) 0f else 24 * s
+        val dw = d.measureText(date); val ww = if (wx.isEmpty()) 0f else wp.measureText(wx)
+        val x0 = (w - (dw + gap + ww)) / 2f
+        val by = spec.dateTop * s + 30 * s + 2 * s
+        c.drawText(date, x0, by, d)
+        if (wx.isNotEmpty()) c.drawText(wx, x0 + dw + gap, by, wp)
         return out
     }
 

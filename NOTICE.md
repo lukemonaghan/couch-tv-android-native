@@ -25,3 +25,5 @@ private to the machine they were made on.
 - `app/src/main/assets/fonts/antonio_light.ttf` is Antonio Light (SIL Open Font Licence 1.1), converted from the woff2 that couch-tv ships.
 - `app/src/main/assets/scenes/scene-night*.{jpg,webp}` are couch-tv's Night scene, made there with an AI image model from text only
   (no source photo, not a real place), copied unchanged. More scenes will be copied here as they are used.
+
+- Inter (static instances at weights 450, 500 and 600 cut from the variable font in couch-tv): SIL Open Font License 1.1, (c) The Inter Project Authors.

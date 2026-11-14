@@ -40,6 +40,22 @@ class Icons(private val ctx: Context, private val onLoaded: () -> Unit) {
         return null
     }
 
+    /** The app's square icon filling [size] pixels (the Night dock clips it to its rounded tile), or null while it loads. */
+    fun square(app: AppItem, size: Int): Bitmap? {
+        val key = "${app.pkg}:sq:$size"
+        cache.get(key)?.let { return it }
+        if (!pending.add(key)) return null
+        worker.execute {
+            val bmp = runCatching {
+                val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val ic = app.ri.activityInfo.loadIcon(ctx.packageManager)
+                ic.setBounds(0, 0, size, size); ic.draw(Canvas(out)); out
+            }.getOrNull()
+            main.post { pending.remove(key); if (bmp != null) { cache.put(key, bmp); onLoaded() } }
+        }
+        return null
+    }
+
     private fun draw(app: AppItem, w: Int, h: Int): Bitmap {
         val pm = ctx.packageManager
         val ai = app.ri.activityInfo
