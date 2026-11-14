@@ -25,7 +25,7 @@ class SettingsScreen(
     private class Row(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
                        val header: Boolean = false, val press: (() -> Unit)? = null)
 
-    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "About")
+    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "About")
     private var page = 0
     private var inRows = false
     private var row = 0
@@ -95,6 +95,23 @@ class SettingsScreen(
                 store.reload()
             },
         )
+        "People" -> {
+            val ppl = prefs.getString("people", null)?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
+            fun save(l: List<String>) { prefs.edit().putString("people", l.joinToString("|")).apply() }
+            ppl.mapIndexed { i, n ->
+                Row(n, if (ppl.size >= 2) "OK to remove" else "", "") { save(ppl.filterIndexed { j, _ -> j != i }); row = 0 }
+            } + Row("Add a person", "Two or more people show a switch at the top left") {
+                act.askText("Name") { n -> save(ppl + n.take(24).replace("|", " ")); changed() }
+            }
+        }
+        "Quick buttons" -> {
+            val q = (prefs.getString("quick", null) ?: "sleep,look").split(',')
+            fun toggle(k: String) { val n = if (k in q) q - k else q + k; prefs.edit().putString("quick", n.joinToString(",")).apply() }
+            listOf(
+                Row("Sleep timer", "Lets the TV go to sleep after 15, 30, 60 or 90 minutes", check = "sleep" in q) { toggle("sleep") },
+                Row("Look switch", "Flips between Night, OLED and Classic", check = "look" in q) { toggle("look") },
+            )
+        }
         else -> listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
             Row("Android settings", "Wi-Fi, display, accounts and the rest") { act.openSettings() },
@@ -220,6 +237,8 @@ class SettingsScreen(
             0 -> { c.drawCircle(cx, cy - 3 * k, 8 * k, paint); c.drawLine(cx, cy + 5 * k, cx, cy + 13 * k, paint) }                // pin
             1 -> { c.drawCircle(cx - 3 * k, cy + 2 * k, 7 * k, paint); c.drawCircle(cx + 6 * k, cy + 4 * k, 5 * k, paint) }        // cloud
             2 -> { rect.set(cx - 12 * k, cy - 9 * k, cx + 12 * k, cy + 9 * k); c.drawRoundRect(rect, 3 * k, 3 * k, paint) }        // picture
+            4 -> { c.drawCircle(cx, cy - 5 * k, 6 * k, paint); c.drawArc(cx - 11 * k, cy + 2 * k, cx + 11 * k, cy + 22 * k, 200f, 140f, false, paint) }
+            5 -> { c.drawLine(cx + 3 * k, cy - 12 * k, cx - 5 * k, cy + 2 * k, paint); c.drawLine(cx - 5 * k, cy + 2 * k, cx + 5 * k, cy + 2 * k, paint); c.drawLine(cx + 5 * k, cy + 2 * k, cx - 3 * k, cy + 12 * k, paint) }
             3 -> for (a in 0..1) for (b in 0..1) { rect.set(cx - 11 * k + a * 13 * k, cy - 11 * k + b * 13 * k, cx - 1 * k + a * 13 * k, cy - 1 * k + b * 13 * k); c.drawRoundRect(rect, 2 * k, 2 * k, paint) }
             else -> { c.drawCircle(cx, cy, 11 * k, paint); c.drawLine(cx, cy - 1 * k, cx, cy + 6 * k, paint); c.drawPoint(cx, cy - 6 * k, paint) }
         }

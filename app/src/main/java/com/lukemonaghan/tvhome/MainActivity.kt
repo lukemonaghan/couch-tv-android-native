@@ -54,6 +54,7 @@ class MainActivity : Activity(), HomeActions {
     override fun onResume() {
         super.onResume()
         resumed = true
+        restoreTimeout()   // a screen-off time left short by the sleep timer is put back
         if (::home.isInitialized) home.refresh()   // an app may have been installed or removed while we were away
     }
 
@@ -131,6 +132,37 @@ class MainActivity : Activity(), HomeActions {
             dialog.dismiss(); true
         }
         dialog.show()
+    }
+
+    private var sleepTimer: Runnable? = null
+
+    /** The sleep timer: after [minutes] the screen is let go to sleep. 0 cancels. Needs "Modify system settings" (WRITE_SETTINGS), see the install notes. */
+    override fun setSleepTimer(minutes: Int) {
+        sleepTimer?.let { main.removeCallbacks(it) }; sleepTimer = null
+        if (minutes <= 0) return
+        val r = Runnable { sleepTimer = null; sleepNow() }
+        sleepTimer = r
+        main.postDelayed(r, minutes * 60_000L)
+    }
+
+    /** Lets the TV go to sleep by shortening the screen-off time to 5 seconds, then puts the old time back. */
+    private fun sleepNow() {
+        val cr = contentResolver
+        if (!Settings.System.canWrite(this)) { Log.w("tvhome", "sleep timer: no WRITE_SETTINGS, cannot sleep the TV"); return }
+        val p = getSharedPreferences("home", MODE_PRIVATE)
+        val old = runCatching { Settings.System.getInt(cr, Settings.System.SCREEN_OFF_TIMEOUT) }.getOrDefault(0)
+        if (old > 10_000) p.edit().putInt("timeout_saved", old).apply()
+        runCatching { Settings.System.putInt(cr, Settings.System.SCREEN_OFF_TIMEOUT, 5_000) }
+        main.postDelayed({ restoreTimeout() }, 40_000L)
+    }
+
+    private fun restoreTimeout() {
+        val p = getSharedPreferences("home", MODE_PRIVATE)
+        val saved = p.getInt("timeout_saved", -1)
+        if (saved > 10_000 && Settings.System.canWrite(this)) {
+            runCatching { Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, saved) }
+            p.edit().remove("timeout_saved").apply()
+        }
     }
 
     override fun openSettings() {

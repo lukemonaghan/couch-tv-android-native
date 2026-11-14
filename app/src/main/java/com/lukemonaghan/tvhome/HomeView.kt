@@ -29,6 +29,7 @@ interface HomeActions {
     fun launch(pkg: String)
     fun openSettings()
     fun askText(title: String, done: (String) -> Unit)
+    fun setSleepTimer(minutes: Int)
     fun openCard(pkg: String, intentUri: String?)
     fun uninstall(pkg: String)
     fun appInfo(pkg: String)
@@ -40,7 +41,7 @@ interface HomeActions {
  * The remote's D-pad drives everything through the key callbacks below.
  */
 class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
-    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS }
+    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS, TOP }
     /** Night: the scene with the big glass clock and the dock. OLED: a grid on pure black. Classic: a grid over the photo. */
     private enum class Look { NIGHT, OLED, CLASSIC }
 
@@ -54,6 +55,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private var menuIndex = 0       // the app (index into store.items) the menu is about
     private var movingIndex = 0
     private var longHandled = false
+    private var ti = 0              // focus in the top row: people, then the quick buttons
     private var ci = 0              // focus in Keep watching
     private var homeRow = 0         // first visible row of the home grid (OLED and Classic)
 
@@ -92,6 +94,19 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     init { store.dockSize = prefs.getInt("dockSize", 10); store.reload() }
     private val rect = RectF()
     private val clip = Path()
+
+    // ---- the top row: the people switch (top left) and the quick buttons (top right)
+
+    fun people(): List<String> = prefs.getString("people", null)?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
+    private fun quick(): List<String> = (prefs.getString("quick", null) ?: "sleep,look").split(',').filter { it == "sleep" || it == "look" }
+    private val sleepOptions = listOf(0, 15, 30, 60, 90)
+    private var sleepIdx = 0
+
+    private class Top(val kind: String, val label: String = "")
+    private fun topItems(): List<Top> {
+        val p = people()
+        return (if (p.size >= 2) p.map { Top("person", it) } else emptyList()) + quick().map { Top(it) }
+    }
 
     /** The scenes the household has on, in couch-tv's order (Home settings, Look and scenes). */
     private fun scenes(): List<SceneRenderer.Spec> {
@@ -147,7 +162,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate(); true }
         Mode.MENU -> { mode = menuFrom; invalidate(); true }
         Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, store.line + 1); invalidate(); true }
-        Mode.CARDS -> { mode = Mode.DOCK; invalidate(); true }
+        Mode.CARDS, Mode.TOP -> { mode = Mode.DOCK; invalidate(); true }
         Mode.SETTINGS -> { if (!settings.back()) { mode = Mode.DOCK; fi = store.line }; invalidate(); true }
         Mode.DOCK -> false
     }
@@ -210,10 +225,18 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val dockCount = store.line + 2
         when (mode) {
             Mode.SETTINGS -> {}
+            Mode.TOP -> {
+                val n = topItems().size
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ti > 0) ti--
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (ti < n - 1) ti++
+                    KeyEvent.KEYCODE_DPAD_DOWN -> mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK
+                }
+            }
             Mode.DOCK -> if (look == Look.NIGHT) when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) { fi++; tick(SoundEffectConstants.NAVIGATION_RIGHT) }
-                KeyEvent.KEYCODE_DPAD_UP -> if (cards().isNotEmpty()) { mode = Mode.CARDS; ci = ci.coerceIn(0, cards().size - 1) }
+                KeyEvent.KEYCODE_DPAD_UP -> if (cards().isNotEmpty()) { mode = Mode.CARDS; ci = ci.coerceIn(0, cards().size - 1) } else if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
                 KeyEvent.KEYCODE_DPAD_DOWN -> openMore(if (fi < store.line) fi else 0)
             } else {
                 val before = fi
@@ -232,6 +255,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                     KeyEvent.KEYCODE_DPAD_LEFT -> if (ci > 0) ci--
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (ci < n - 1) ci++
                     KeyEvent.KEYCODE_DPAD_DOWN -> mode = Mode.DOCK
+                    KeyEvent.KEYCODE_DPAD_UP -> if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
                 }
                 if (ci != before) tick(SoundEffectConstants.NAVIGATION_RIGHT)
             }
@@ -277,6 +301,14 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 else -> { openMore(0); invalidate() }
             }
             Mode.SETTINGS -> settings.key(KeyEvent.KEYCODE_DPAD_CENTER)
+            Mode.TOP -> topItems().getOrNull(ti)?.let { t ->
+                when (t.kind) {
+                    "person" -> prefs.edit().putInt("person", people().indexOf(t.label).coerceAtLeast(0)).apply()
+                    "sleep" -> { sleepIdx = (sleepIdx + 1) % sleepOptions.size; act.setSleepTimer(sleepOptions[sleepIdx]) }
+                    "look" -> cycleLook()
+                }
+                invalidate()
+            }
             Mode.CARDS -> cards().getOrNull(ci)?.let { act.openCard(it.pkg, it.intentUri) }
             Mode.MORE -> store.items.getOrNull(mi)?.let { launch(it) }
             Mode.MENU -> chooseMenu()
@@ -386,8 +418,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         drawClock(c, u)
         when (mode) {
             Mode.MORE -> drawMore(c, u)
-            Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else { drawCards(c, u); drawDock(c, u) }; drawMenu(c, u) }
-            else -> { drawCards(c, u); drawDock(c, u) }
+            Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else { drawTop(c, u); drawCards(c, u); drawDock(c, u) }; drawMenu(c, u) }
+            else -> { drawTop(c, u); drawCards(c, u); drawDock(c, u) }
         }
     }
 
@@ -416,7 +448,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val pl = (width - pw) / 2f
         val pt = height - 46 * u - ph
         glass(c, pl, pt, pl + pw, pt + ph, 46 * u)
-        val focus = if (mode == Mode.MOVING) movingIndex else if (mode == Mode.CARDS) -1 else fi
+        val focus = if (mode == Mode.MOVING) movingIndex else if (mode == Mode.CARDS || mode == Mode.TOP) -1 else fi
         for (pass in 0..1) for (i in 0 until n) {
             if ((i == focus) != (pass == 1)) continue
             nightIcon(c, u, pl + padX + i * (tw + gap), pt + padY, tw, i, i == focus, mode == Mode.MOVING)
@@ -424,6 +456,80 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** Night's top row: the people switch at 80, 60 and the round quick buttons at the right edge. */
+    private fun drawTop(c: Canvas, u: Float) {
+        if (look != Look.NIGHT) return
+        val items = topItems()
+        if (items.isEmpty()) return
+        val people = items.filter { it.kind == "person" }
+        val sel = prefs.getInt("person", 0).coerceIn(0, maxOf(0, people.size - 1))
+        text.typeface = Fonts.semibold(context); text.textSize = 23 * u; text.textAlign = Paint.Align.LEFT
+        if (people.isNotEmpty()) {
+            val pw = people.map { text.measureText(it.label) + 40 * u }
+            val total = pw.sum() + (people.size - 1) * 8 * u + 12 * u
+            glass(c, 80 * u, 60 * u, 80 * u + total, 108 * u, 32 * u)
+            var x = 86 * u
+            for (i in people.indices) {
+                val on = i == sel
+                val focus = mode == Mode.TOP && ti == i
+                rect.set(x, 66 * u, x + pw[i], 102 * u)
+                if (focus) {
+                    paint.style = Paint.Style.FILL; paint.color = Color.WHITE
+                    val g = 3 * u; rect.inset(-g, -g); c.drawRoundRect(rect, 24 * u + g, 24 * u + g, paint); rect.inset(g, g)
+                }
+                if (on || focus) { paint.style = Paint.Style.FILL; paint.color = if (on) Color.WHITE else Color.argb(41, 255, 255, 255); c.drawRoundRect(rect, 24 * u, 24 * u, paint) }
+                text.color = if (on) Color.rgb(17, 17, 17) else if (focus) Color.WHITE else Color.argb(199, 255, 255, 255)
+                c.drawText(people[i].label, x + 20 * u, 91 * u, text)
+                x += pw[i] + 8 * u
+            }
+            text.color = Color.WHITE
+        }
+        // quick buttons, right to left from 80 px off the edge
+        var right = width - 80 * u
+        val quick = items.filter { it.kind != "person" }.asReversed()
+        for (q in quick) {
+            val idx = items.indexOf(q)
+            val focus = mode == Mode.TOP && ti == idx
+            val label = if (q.kind == "sleep" && sleepOptions[sleepIdx] > 0) "${sleepOptions[sleepIdx]}m" else ""
+            val w = 88 * u.coerceAtLeast(0.01f) + (if (label.isNotEmpty()) 70 * u else 0f) + 4 * u
+            val l = right - w
+            if (focus) {
+                paint.style = Paint.Style.FILL; paint.color = Color.WHITE
+                rect.set(l - 3 * u, 57 * u, right + 3 * u, 151 * u); c.drawRoundRect(rect, 47 * u, 47 * u, paint)
+            }
+            if (focus) { paint.style = Paint.Style.FILL; paint.color = Color.WHITE; rect.set(l, 60 * u, right, 148 * u); c.drawRoundRect(rect, 44 * u, 44 * u, paint) }
+            else glass(c, l, 60 * u, right, 148 * u, 44 * u)
+            val fg = if (focus) Color.rgb(17, 17, 17) else Color.WHITE
+            quickIcon(c, u, q.kind, if (label.isNotEmpty()) l + 24 * u + 18 * u else (l + right) / 2f, 104 * u, fg)
+            if (label.isNotEmpty()) {
+                text.color = fg; text.textSize = 23 * u; text.typeface = Fonts.semibold(context)
+                c.drawText(label, l + 24 * u + 18 * u + 28 * u, 112 * u, text); text.color = Color.WHITE
+            }
+            right = l - 16 * u
+        }
+    }
+
+    private fun quickIcon(c: Canvas, u: Float, kind: String, cx: Float, cy: Float, color: Int) {
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = 3.2f * u; paint.color = color; paint.strokeCap = Paint.Cap.ROUND; paint.strokeJoin = Paint.Join.ROUND
+        clip.reset()
+        if (kind == "sleep") {   // a crescent moon
+            val r = 15 * u
+            rect.set(cx - r, cy - r, cx + r, cy + r)
+            clip.arcTo(rect, 50f, 260f, true)
+            rect.set(cx - r * 0.35f, cy - r * 1.05f, cx + r * 1.2f, cy + r * 0.95f)
+            clip.arcTo(rect, 290f, -220f, false)
+            c.drawPath(clip, paint)
+        } else {                 // a sun-like look switch: a circle with rays
+            c.drawCircle(cx, cy, 8 * u, paint)
+            for (a in 0 until 8) {
+                val t = Math.toRadians(a * 45.0)
+                c.drawLine(cx + (13 * u * Math.cos(t)).toFloat(), cy + (13 * u * Math.sin(t)).toFloat(),
+                    cx + (17 * u * Math.cos(t)).toFloat(), cy + (17 * u * Math.sin(t)).toFloat(), paint)
+            }
+        }
+        paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT
+    }
 
     /** Night's Keep watching: a heading and glass cards, 520 x 141, 22 apart, from 80 px in. Three fit; the row slides to keep focus in view. */
     private fun drawCards(c: Canvas, u: Float) {
