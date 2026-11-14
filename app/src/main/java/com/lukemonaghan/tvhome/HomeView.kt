@@ -399,7 +399,11 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (app != null) {
             val bmp = icons.square(app, size.toInt().coerceAtLeast(1))
             if (bmp != null) {
-                clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
+                // the app's icon sits inside the tile with room around it, like the logos in couch-tv's dock
+                val inset = size * 0.15f
+                rect.set(x + inset, y + inset, x + size - inset, y + size - inset)
+                val ir = rect.width() * 0.265f
+                clip.reset(); clip.addRoundRect(rect, ir, ir, Path.Direction.CW)
                 c.save(); c.clipPath(clip)
                 paint.colorFilter = if (focused) null else dimFilter
                 paint.alpha = if (moving && !focused) 178 else 255
@@ -430,7 +434,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     /** The gear and the three dots, drawn with strokes the way couch-tv's icons are (24 unit grid, 36 px, stroke 1.7). */
     private fun glyph(c: Canvas, u: Float, cx: Float, cy: Float, size: Float, gear: Boolean) {
-        val k = 44f * u / 24f * (size / (112 * u))
+        val k = 58f * u / 24f * (size / (112 * u))
         paint.style = Paint.Style.STROKE; paint.color = Color.WHITE; paint.alpha = 255
         paint.strokeWidth = 1.7f * k; paint.strokeCap = Paint.Cap.ROUND
         if (gear) {
@@ -443,7 +447,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             c.drawCircle(cx, cy, 6.2f * k, paint)
         } else {
             paint.style = Paint.Style.FILL
-            for (d in -1..1) c.drawCircle(cx + d * 8.7f * k, cy, 2.3f * k, paint)
+            for (d in -1..1) c.drawCircle(cx + d * 7.6f * k, cy, 2.1f * k, paint)
         }
         paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT
     }
