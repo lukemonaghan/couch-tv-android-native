@@ -101,7 +101,8 @@ object SceneRenderer {
         val cx = w / 2f
         val tb = Rect()
         t.getTextBounds(time, 0, time.length, tb)
-        val box = RectF(cx + tb.left - 20 * s, baseline + fm.ascent - 20 * s, cx + tb.right + 20 * s, baseline + fm.descent + 20 * s)
+        val half = t.measureText(time) / 2f   // getTextBounds starts at x = 0 whatever the alignment, so centre by the measured width
+        val box = RectF(cx - half - 40 * s, baseline + fm.ascent - 20 * s, cx + half + 40 * s, baseline + fm.descent + 20 * s)
 
         val clockLayer = c.saveLayer(null, if (dim) Paint().apply { colorFilter = brightness(0.72f) } else null)
 
