@@ -230,3 +230,14 @@ Package and app id: `com.lukemonaghan.tvhome`. Owner: lukemonaghan. Because the 
 `app.couchtv.launcher`, both apps can sit on one TV, but upstream's `apply.sh` and `undo.sh` will not find
 this app (they hard-code the old id). This project needs its own install and undo script. Until then, set it
 as the home by hand: `cmd package set-home-activity com.lukemonaghan.tvhome/.MainActivity`.
+
+## Emulator, as set up (2026-11-15)
+- Installed into the shared SDK: `emulator` and `system-images;android-30;android-tv;x86` (about 4 GB together).
+- AVD `tv30` lives in `/home/lukem/Documents/git/couch-tv/build/avd` (set `ANDROID_AVD_HOME` to it): 1920x1080 at
+  320 dpi (same as both TVs), 1536 MB RAM, 2 cores. KVM accelerated.
+- Boot: `ANDROID_AVD_HOME=.../couch-tv/build/avd .../build/android-sdk/emulator/emulator -avd tv30 -gpu host -no-snapshot -no-audio`
+- Like the real TVs, the stock home wins the Home key, so start the app with
+  `adb -s emulator-5554 shell am start -n com.lukemonaghan.tvhome/.MainActivity`.
+- First measurement, placeholder app: PSS 32.7 MB, RSS 121.7 MB (`dumpsys meminfo`). That is an emulator
+  on a fast CPU, so **not comparable** to the 218 MB measured for the WebView app on the Kogan. Measure
+  both builds on the same device before drawing a conclusion.
