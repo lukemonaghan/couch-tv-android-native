@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Holding OK on an app, "Uninstall": lets this app open Android's remove dialog, which always asks first. -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- Never granted on install: a computer grants it over ADB so Android cannot drop the Home button watch
          after an update or a reboot (FireWatch.kt). The undo takes it back. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
@@ -12,6 +14,11 @@
 
     <!-- The TV's own homes: the Home button watch and the crash guard look for them. -->
     <queries>
+        <!-- See every app that has a TV launcher entry (Android 11 and newer hide them otherwise). -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
         <package android:name="com.amazon.tv.launcher" />
         <package android:name="com.google.android.apps.tv.launcherx" />
         <package android:name="com.google.android.tvlauncher" />

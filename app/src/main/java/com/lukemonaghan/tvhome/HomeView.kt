@@ -1,0 +1,379 @@
+package com.lukemonaghan.tvhome
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
+import android.text.TextUtils
+import android.text.TextPaint
+import android.text.format.DateFormat
+import android.view.KeyEvent
+import android.view.SoundEffectConstants
+import android.view.View
+import java.util.Calendar
+
+/** What the home asks the Activity to do. */
+interface HomeActions {
+    fun launch(pkg: String)
+    fun openSettings()
+    fun uninstall(pkg: String)
+    fun appInfo(pkg: String)
+}
+
+/**
+ * The whole home, drawn on one Canvas: the clock, the dock (apps, then Settings and More apps), the
+ * More apps grid, the hold-OK menu and the move mode. No child views, no adapters, no libraries.
+ * The remote's D-pad drives everything through the key callbacks below.
+ */
+class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
+    private enum class Mode { DOCK, MORE, MENU, MOVING }
+
+    private var mode = Mode.DOCK
+    private var menuFrom = Mode.DOCK
+    private var fi = 0              // focus in the dock: apps, then Settings, then More apps
+    private var mi = 0              // focus in the More apps grid: an index into store.items
+    private var dockReturn = 0      // where the dock focus goes back to after More apps
+    private var scrollRow = 0
+    private var menuPick = 0
+    private var menuIndex = 0       // the app (index into store.items) the menu is about
+    private var movingIndex = 0
+    private var longHandled = false
+
+    private val icons = Icons(ctx) { invalidate() }
+    private val main = Handler(Looper.getMainLooper())
+
+    private val ground = Color.parseColor("#0D1E19")
+    private val tileBg = Color.parseColor("#1A2B26")
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val text = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val clockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
+        textAlign = Paint.Align.CENTER
+    }
+    private val rect = RectF()
+    private val clip = Path()
+
+    private val minuteTick = object : Runnable {
+        override fun run() {
+            invalidate()
+            val now = System.currentTimeMillis()
+            main.postDelayed(this, 60_000L - now % 60_000L + 50L)   // once a minute, on the minute
+        }
+    }
+
+    init {
+        isFocusable = true
+        isFocusableInTouchMode = true
+        text.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+    }
+
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); requestFocus(); minuteTick.run() }
+    override fun onDetachedFromWindow() { main.removeCallbacks(minuteTick); super.onDetachedFromWindow() }
+
+    // ------------------------------------------------------------------ what the Activity calls
+
+    /** Home pressed while the home is already showing: back to the first tile. */
+    fun goHome() { mode = Mode.DOCK; fi = 0; invalidate() }
+
+    /** The app list changed (a package came or went, or the home came back to the front). */
+    fun refresh() {
+        store.reload()
+        fi = fi.coerceIn(0, store.line + 1)
+        mi = mi.coerceIn(0, maxOf(0, store.items.size - 1))
+        if (mode == Mode.MOVING && movingIndex >= store.line) mode = Mode.DOCK
+        invalidate()
+    }
+
+    /** The TV is short of memory: drop the pictures, they are drawn again when needed. */
+    fun trim() { icons.clear() }
+
+    /** Back: one step out of whatever is open. False when the home is already at its top level. */
+    fun back(): Boolean = when (mode) {
+        Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate(); true }
+        Mode.MENU -> { mode = menuFrom; invalidate(); true }
+        Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, store.line + 1); invalidate(); true }
+        Mode.DOCK -> false
+    }
+
+    // ------------------------------------------------------------------ keys
+
+    override fun onKeyDown(code: Int, e: KeyEvent): Boolean {
+        when (code) {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                dir(code); return true
+            }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                if (e.repeatCount == 0) { longHandled = false; e.startTracking() }
+                return true
+            }
+        }
+        return super.onKeyDown(code, e)
+    }
+
+    override fun onKeyLongPress(code: Int, e: KeyEvent): Boolean {
+        if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            longHandled = true
+            longPress()
+            return true
+        }
+        return super.onKeyLongPress(code, e)
+    }
+
+    override fun onKeyUp(code: Int, e: KeyEvent): Boolean {
+        if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            if (!longHandled) press()
+            return true
+        }
+        return super.onKeyUp(code, e)
+    }
+
+    private fun tick(sound: Int) { playSoundEffect(sound) }
+
+    private fun dir(code: Int) {
+        val dockCount = store.line + 2
+        when (mode) {
+            Mode.DOCK -> when (code) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) { fi++; tick(SoundEffectConstants.NAVIGATION_RIGHT) }
+                KeyEvent.KEYCODE_DPAD_DOWN -> openMore(if (fi < store.line) fi else 0)
+            }
+            Mode.MORE -> {
+                val before = mi
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (mi > 0) mi--
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (mi < store.items.size - 1) mi++
+                    KeyEvent.KEYCODE_DPAD_UP -> if (mi >= COLS) mi -= COLS else { back(); return }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> if (mi + COLS < store.items.size) mi += COLS else mi = store.items.size - 1
+                }
+                if (mi != before) tick(SoundEffectConstants.NAVIGATION_DOWN)
+            }
+            Mode.MENU -> when (code) {
+                KeyEvent.KEYCODE_DPAD_UP -> if (menuPick > 0) menuPick--
+                KeyEvent.KEYCODE_DPAD_DOWN -> if (menuPick < MENU_OPTIONS - 1) menuPick++
+            }
+            Mode.MOVING -> when (code) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> if (movingIndex > 0) { store.moveInDock(movingIndex, movingIndex - 1); movingIndex-- }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (movingIndex < store.line - 1) { store.moveInDock(movingIndex, movingIndex + 1); movingIndex++ }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    store.sendToMore(movingIndex)   // behind More apps
+                    mode = Mode.DOCK
+                    fi = minOf(movingIndex, store.line + 1)
+                }
+            }
+        }
+        invalidate()
+    }
+
+    private fun openMore(at: Int) {
+        dockReturn = fi
+        mi = at.coerceIn(0, maxOf(0, store.items.size - 1))
+        scrollRow = 0
+        mode = Mode.MORE
+    }
+
+    private fun press() {
+        when (mode) {
+            Mode.DOCK -> when {
+                fi < store.line -> launch(store.items[fi])
+                fi == store.line -> act.openSettings()
+                else -> { openMore(0); invalidate() }
+            }
+            Mode.MORE -> store.items.getOrNull(mi)?.let { launch(it) }
+            Mode.MENU -> chooseMenu()
+            Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate() }
+        }
+    }
+
+    private fun longPress() {
+        when (mode) {
+            Mode.DOCK -> if (fi < store.line) openMenu(fi)
+            Mode.MORE -> {
+                if (mi >= store.line) {
+                    val pkg = store.items[mi].pkg
+                    store.bringToDock(mi)   // behind More apps: to the end of the dock
+                    mi = store.items.indexOfFirst { it.pkg == pkg }.coerceAtLeast(0)
+                } else openMenu(mi)
+            }
+            else -> {}
+        }
+        invalidate()
+    }
+
+    private fun launch(a: AppItem) { store.opened(a.pkg); act.launch(a.pkg); invalidate() }
+
+    private fun openMenu(index: Int) {
+        menuFrom = mode
+        menuIndex = index
+        menuPick = 0
+        mode = Mode.MENU
+    }
+
+    private fun chooseMenu() {
+        val a = store.items.getOrNull(menuIndex) ?: run { mode = menuFrom; return }
+        when (menuPick) {
+            0 -> { mode = Mode.MOVING; movingIndex = menuIndex }   // menuIndex is always in the dock here
+            1 -> { mode = menuFrom; act.uninstall(a.pkg) }
+            2 -> { mode = menuFrom; act.appInfo(a.pkg) }
+        }
+        invalidate()
+    }
+
+    // ------------------------------------------------------------------ drawing
+
+    override fun onDraw(c: Canvas) {
+        val u = height / 1080f
+        c.drawColor(ground)
+        drawClock(c, u)
+        when (mode) {
+            Mode.MORE -> drawMore(c, u)
+            Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else drawDock(c, u); drawMenu(c, u) }
+            else -> drawDock(c, u)
+        }
+    }
+
+    private fun drawClock(c: Canvas, u: Float) {
+        if (mode == Mode.MORE) return
+        val fmt = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm"
+        clockPaint.textSize = 250 * u
+        c.drawText(DateFormat.format(fmt, Calendar.getInstance()).toString(), width / 2f, 400 * u, clockPaint)
+    }
+
+    private fun drawDock(c: Canvas, u: Float) {
+        val n = store.line + 2
+        val gap = 14 * u
+        val tw = minOf(170 * u, (width - 120 * u - (n - 1) * gap) / n)
+        val th = tw * 9f / 16f
+        val x0 = (width - (n * tw + (n - 1) * gap)) / 2f
+        val y = 680 * u
+        val focus = if (mode == Mode.MOVING) movingIndex else fi
+        val dim = mode == Mode.MOVING
+        for (i in 0 until n) {
+            if (i == focus) continue
+            tile(c, u, x0 + i * (tw + gap), y, tw, th, i, false, dim, 0f)
+        }
+        tile(c, u, x0 + focus * (tw + gap), y, tw, th, focus, true, false, if (dim) -14 * u else 0f)
+        val label = dockTitle(focus)
+        text.textSize = 30 * u
+        text.textAlign = Paint.Align.CENTER
+        c.drawText(label, width / 2f, y + th + 80 * u, text)
+    }
+
+    private fun dockTitle(i: Int): String = when {
+        i < store.line -> store.items[i].label
+        i == store.line -> "Settings"
+        else -> "More apps"
+    }
+
+    private fun drawMore(c: Canvas, u: Float) {
+        text.textAlign = Paint.Align.LEFT
+        text.textSize = 44 * u
+        c.drawText("More apps", 100 * u, 120 * u, text)
+        val gap = 28 * u
+        val tw = 250 * u
+        val th = tw * 9f / 16f
+        val pitch = th + 52 * u
+        val top = 190 * u
+        val rows = ((height - top - 40 * u) / pitch).toInt().coerceAtLeast(1)
+        val row = mi / COLS
+        if (row < scrollRow) scrollRow = row
+        if (row >= scrollRow + rows) scrollRow = row - rows + 1
+        val x0 = (width - (COLS * tw + (COLS - 1) * gap)) / 2f
+        for (i in store.items.indices) {
+            val r = i / COLS - scrollRow
+            if (r < 0 || r >= rows) continue
+            val focused = i == mi && mode == Mode.MORE
+            val x = x0 + (i % COLS) * (tw + gap)
+            val y = top + r * pitch
+            tile(c, u, x, y, tw, th, i, focused, false, 0f, grid = true)
+            text.textSize = 24 * u
+            text.textAlign = Paint.Align.CENTER
+            val label = TextUtils.ellipsize(store.items[i].label, text, tw, TextUtils.TruncateAt.END)
+            c.drawText(label, 0, label.length, x + tw / 2, y + th + 34 * u, text)
+        }
+    }
+
+    /** One tile: an app, the Settings tile or the More apps tile. [index] is a dock position, or in a grid an items index. */
+    private fun tile(c: Canvas, u: Float, x: Float, y: Float, w: Float, h: Float, index: Int,
+                     focused: Boolean, dim: Boolean, lift: Float, grid: Boolean = false) {
+        val app = if (grid) store.items.getOrNull(index) else if (index < store.line) store.items[index] else null
+        val scale = if (focused) 1.12f else 1f
+        val cx = x + w / 2
+        val cy = y + h / 2 + lift
+        c.save()
+        c.translate(cx, cy)
+        c.scale(scale, scale)
+        rect.set(-w / 2, -h / 2, w / 2, h / 2)
+        val radius = 10 * u
+        paint.style = Paint.Style.FILL
+        paint.color = tileBg
+        paint.alpha = if (dim) 120 else 255
+        c.drawRoundRect(rect, radius, radius, paint)
+        if (app != null) {
+            val bmp = icons.get(app, w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1))
+            if (bmp != null) {
+                clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
+                c.save(); c.clipPath(clip)
+                paint.alpha = if (dim) 120 else 255
+                c.drawBitmap(bmp, -w / 2, -h / 2, paint)
+                c.restore()
+            } else {
+                text.textSize = h * 0.4f; text.textAlign = Paint.Align.CENTER
+                c.drawText(app.label.take(1).uppercase(), 0f, h * 0.14f, text)
+            }
+            if (store.isNew(app.pkg)) {
+                paint.color = Color.parseColor("#3D8BFF"); paint.alpha = 255
+                c.drawCircle(w / 2 - 12 * u, -h / 2 + 12 * u, 6 * u, paint)
+            }
+        } else {
+            text.textSize = h * 0.2f; text.textAlign = Paint.Align.CENTER
+            c.drawText(if (index == store.line) "Settings" else "More apps", 0f, h * 0.07f, text)
+        }
+        if (focused) {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 3 * u
+            paint.color = Color.WHITE; paint.alpha = 255
+            c.drawRoundRect(rect, radius, radius, paint)
+        }
+        c.restore()
+    }
+
+    private fun drawMenu(c: Canvas, u: Float) {
+        paint.style = Paint.Style.FILL
+        paint.color = Color.BLACK; paint.alpha = 150
+        c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        val w = 560 * u
+        val rowH = 84 * u
+        val h = 110 * u + MENU_OPTIONS * rowH
+        val l = (width - w) / 2f
+        val t = (height - h) / 2f
+        rect.set(l, t, l + w, t + h)
+        paint.color = Color.parseColor("#17241F"); paint.alpha = 255
+        c.drawRoundRect(rect, 18 * u, 18 * u, paint)
+        text.textAlign = Paint.Align.LEFT
+        text.textSize = 32 * u
+        val title = TextUtils.ellipsize(store.items.getOrNull(menuIndex)?.label.orEmpty(), text, w - 80 * u, TextUtils.TruncateAt.END)
+        c.drawText(title, 0, title.length, l + 40 * u, t + 70 * u, text)
+        val names = arrayOf("Move", "Uninstall", "App info")
+        for (i in 0 until MENU_OPTIONS) {
+            val ry = t + 100 * u + i * rowH
+            if (i == menuPick) {
+                rect.set(l + 20 * u, ry, l + w - 20 * u, ry + rowH - 8 * u)
+                paint.color = Color.parseColor("#2B4A40"); paint.alpha = 255
+                c.drawRoundRect(rect, 12 * u, 12 * u, paint)
+            }
+            text.textSize = 30 * u
+            c.drawText(names[i], l + 50 * u, ry + rowH * 0.6f, text)
+        }
+    }
+
+    private companion object {
+        const val COLS = 6
+        const val MENU_OPTIONS = 3
+    }
+}

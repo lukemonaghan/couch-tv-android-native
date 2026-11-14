@@ -259,3 +259,23 @@ as the home by hand: `cmd package set-home-activity com.lukemonaghan.tvhome/.Mai
   Android 10 `moveToFront`. Those are upstream behaviours copied as is.
 - To run it on a device: `adb install -r app/build/outputs/apk/debug/app-debug.apk`, then
   `adb shell pm grant com.lukemonaghan.tvhome android.permission.WRITE_SECURE_SETTINGS`, then start the app.
+
+## Step 2 slice done (2026-11-15): the apps row
+- New files: `AppStore.kt` (scan, order, line, new-app dots, move/send/bring), `Icons.kt` (async banner cache,
+  12 MB bound, one worker thread), `HomeView.kt` (clock, dock, More apps grid, hold-OK menu, move mode, all on one
+  Canvas). `MainActivity` now hosts `HomeView` and does launch, Settings, uninstall (Android's dialog) and App info.
+  Manifest got the `LEANBACK_LAUNCHER` `<queries>` (without it Android 11+ lists no apps) and
+  `REQUEST_DELETE_PACKAGES`. APK: 868 KB.
+- Same model as upstream: an ordered package list plus a "line"; items before the line are the dock. A new app goes
+  at the line with a blue dot until opened once. More apps shows everything. Hold OK on a dock app: Move, Uninstall,
+  App info. In Move: left and right reorder, Down sends the app behind More apps, OK or Back drops it. Hold OK on an
+  app behind More apps: it goes to the end of the dock, and a full dock pushes its last app behind More apps.
+- Bugs found by running it and fixed: the fresh-app set was never saved (dots vanished on the next reload), and the
+  first run did not fix the order (a later install landed alphabetically in the middle).
+- Verified on the emulator with screenshots and `adb input` (including `--longpress`): dock, focus scale, dots,
+  menu, move, send to More, More grid, bring to dock, and that the order survives in `shared_prefs/apps.xml`.
+- Not done yet from step 2: **Hide from home** (needs Home settings, Apps to undo it), `hide_packages`, pinned
+  inputs, the App Store tile default position, per-TV `dock_size` from config, Down on the dock's last row opening
+  More apps at the focused app (it opens at the same index), the focus ring is hard to see on white banners
+  (YouTube, Play Store), and no scroll hint in the More grid.
+- Not tested: more than ~10 apps (dock overflow, grid scrolling with several rows), a real TV, performance.

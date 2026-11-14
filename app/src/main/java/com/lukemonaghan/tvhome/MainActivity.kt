@@ -1,25 +1,27 @@
 package com.lukemonaghan.tvhome
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Typeface
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.format.DateFormat
-import android.content.Intent
+import android.provider.Settings
 import android.util.Log
-import android.view.View
+import android.view.KeyEvent
 import java.lang.ref.WeakReference
-import java.util.Calendar
 
-/** Placeholder home: a clock on a dark background, drawn on a Canvas. Proves the build and the emulator loop. */
-class MainActivity : Activity() {
+/** The home: one Activity holding one custom view (HomeView). */
+class MainActivity : Activity(), HomeActions {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var resumed = false
+    private lateinit var store: AppStore
+    private lateinit var home: HomeView
+    private var packageWatcher: BroadcastReceiver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,9 +35,12 @@ class MainActivity : Activity() {
         }
         CrashGuard.started(this)
         main.postDelayed({ CrashGuard.settled(this) }, CrashGuard.SETTLE_MS)
-        setContentView(ClockView(this))
+        store = AppStore(this).also { it.reload() }
+        home = HomeView(this, store, this)
+        setContentView(home)
         FireWatch.ensure(this)   // only once a computer has granted WRITE_SECURE_SETTINGS over ADB
         main.postDelayed({ FireWatch.rebindIfUnbound(applicationContext) }, 10_000L)   // listed but not bound after a force-stop
+        watchPackages()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -45,9 +50,65 @@ class MainActivity : Activity() {
         backToFirstTile()   // Home pressed while we are already in front
     }
 
-    override fun onResume() { super.onResume(); resumed = true }
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        if (::home.isInitialized) home.refresh()   // an app may have been installed or removed while we were away
+    }
+
     override fun onPause() { resumed = false; super.onPause() }
-    override fun onDestroy() { main.removeCallbacksAndMessages(null); super.onDestroy() }
+
+    override fun onDestroy() {
+        main.removeCallbacksAndMessages(null)
+        packageWatcher?.let { runCatching { unregisterReceiver(it) } }
+        super.onDestroy()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_BACKGROUND && ::home.isInitialized) home.trim()
+    }
+
+    /** Back never leaves the home: it only steps out of More apps, a menu or move mode. */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() { if (::home.isInitialized) home.back() }
+
+    private fun watchPackages() {
+        val f = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED); addAction(Intent.ACTION_PACKAGE_REMOVED); addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addDataScheme("package")
+        }
+        packageWatcher = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) { home.refresh() }
+        }
+        registerReceiver(packageWatcher, f)
+    }
+
+    // ------------------------------------------------------------------ HomeActions
+
+    override fun launch(pkg: String) {
+        val i = packageManager.getLeanbackLaunchIntentForPackage(pkg) ?: packageManager.getLaunchIntentForPackage(pkg) ?: return
+        start(i)
+    }
+
+    override fun openSettings() {
+        FireWatch.allowSettingsNow()   // so the Home button watch leaves Settings alone on a Fire TV
+        start(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK))
+    }
+
+    /** Android's own remove dialog, which always asks first. Needs REQUEST_DELETE_PACKAGES. */
+    override fun uninstall(pkg: String) {
+        if (pkg == packageName) return
+        if (!start(Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")))) appInfo(pkg)
+    }
+
+    override fun appInfo(pkg: String) {
+        start(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))
+    }
+
+    private fun start(i: Intent): Boolean = try {
+        startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
+    } catch (e: Exception) { Log.w("tvhome", "could not start $i: ${e.message}"); false }
 
     companion object {
         @Volatile private var shown: WeakReference<MainActivity>? = null
@@ -55,31 +116,10 @@ class MainActivity : Activity() {
         /** True while the home is resumed (in front). FireWatch checks this after a move to front on Android 10 (upstream #202). */
         fun isInFront(): Boolean = shown?.get()?.resumed == true
 
-        /** Home pressed, or FireWatch brought us back: go to the first tile. Nothing to reset yet. */
-        fun backToFirstTile() {}
-    }
-
-    private class ClockView(context: Context) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
-            textAlign = Paint.Align.CENTER
-        }
-        private val tick = object : Runnable {
-            override fun run() {
-                invalidate()
-                postDelayed(this, 1000)
-            }
-        }
-
-        override fun onAttachedToWindow() { super.onAttachedToWindow(); tick.run() }
-        override fun onDetachedFromWindow() { removeCallbacks(tick); super.onDetachedFromWindow() }
-
-        override fun onDraw(canvas: Canvas) {
-            canvas.drawColor(Color.parseColor("#0D1E19"))
-            val fmt = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm"
-            paint.textSize = height * 0.28f
-            canvas.drawText(DateFormat.format(fmt, Calendar.getInstance()).toString(), width / 2f, height / 2f, paint)
+        /** Home pressed, or FireWatch brought us back: go to the first tile. */
+        fun backToFirstTile() {
+            val a = shown?.get() ?: return
+            a.main.post { if (!a.isFinishing && !a.isDestroyed && a::home.isInitialized) a.home.goHome() }
         }
     }
 }
