@@ -20,3 +20,8 @@ Other changes made after copying are in this repository's git history.
 ## What is not copied
 couch-tv's own `config.json`, `.env`, TV addresses, build output and any history files. Those are
 private to the machine they were made on.
+
+## Fonts and pictures
+- `app/src/main/assets/fonts/antonio_light.ttf` is Antonio Light (SIL Open Font Licence 1.1), converted from the woff2 that couch-tv ships.
+- `app/src/main/assets/scenes/scene-night*.{jpg,webp}` are couch-tv's Night scene, made there with an AI image model from text only
+  (no source photo, not a real place), copied unchanged. More scenes will be copied here as they are used.

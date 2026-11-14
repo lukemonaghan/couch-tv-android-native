@@ -1,11 +1,14 @@
 package com.lukemonaghan.tvhome
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -16,6 +19,8 @@ import android.view.KeyEvent
 import android.view.SoundEffectConstants
 import android.view.View
 import java.util.Calendar
+import java.util.Locale
+import java.util.concurrent.Executors
 
 /** What the home asks the Activity to do. */
 interface HomeActions {
@@ -32,6 +37,8 @@ interface HomeActions {
  */
 class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
     private enum class Mode { DOCK, MORE, MENU, MOVING }
+    /** Night: the scene with the big glass clock and the dock. OLED: a grid on pure black. Classic: a grid over the photo. */
+    private enum class Look { NIGHT, OLED, CLASSIC }
 
     private var mode = Mode.DOCK
     private var menuFrom = Mode.DOCK
@@ -43,6 +50,14 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private var menuIndex = 0       // the app (index into store.items) the menu is about
     private var movingIndex = 0
     private var longHandled = false
+    private var homeRow = 0         // first visible row of the home grid (OLED and Classic)
+
+    private val prefs = ctx.getSharedPreferences("home", Context.MODE_PRIVATE)
+    private var look = runCatching { Look.valueOf(prefs.getString("look", null) ?: "NIGHT") }.getOrDefault(Look.NIGHT)
+    private var sceneBmp: Bitmap? = null
+    private var sceneKey = ""
+    private var sceneBusy = false
+    private val worker = Executors.newSingleThreadExecutor()
 
     private val icons = Icons(ctx) { invalidate() }
     private val main = Handler(Looper.getMainLooper())
@@ -112,6 +127,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 if (e.repeatCount == 0) { longHandled = false; e.startTracking() }
                 return true
             }
+            KeyEvent.KEYCODE_MENU -> { if (e.repeatCount == 0) cycleLook(); return true }   // temporary: becomes the look quick button
         }
         return super.onKeyDown(code, e)
     }
@@ -135,13 +151,32 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun tick(sound: Int) { playSoundEffect(sound) }
 
+    private fun cycleLook() {
+        look = Look.values()[(look.ordinal + 1) % Look.values().size]
+        prefs.edit().putString("look", look.name).apply()
+        sceneBmp = null; sceneKey = ""
+        fi = fi.coerceIn(0, store.line + 1)
+        invalidate()
+    }
+
+    private val gridCols = 5
+
     private fun dir(code: Int) {
         val dockCount = store.line + 2
         when (mode) {
-            Mode.DOCK -> when (code) {
+            Mode.DOCK -> if (look == Look.NIGHT) when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) { fi++; tick(SoundEffectConstants.NAVIGATION_RIGHT) }
                 KeyEvent.KEYCODE_DPAD_DOWN -> openMore(if (fi < store.line) fi else 0)
+            } else {
+                val before = fi
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) fi--
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) fi++
+                    KeyEvent.KEYCODE_DPAD_UP -> if (fi >= gridCols) fi -= gridCols
+                    KeyEvent.KEYCODE_DPAD_DOWN -> if (fi + gridCols < dockCount) fi += gridCols else if (fi / gridCols == (dockCount - 1) / gridCols) openMore(if (fi < store.line) fi else 0) else fi = dockCount - 1
+                }
+                if (fi != before) tick(SoundEffectConstants.NAVIGATION_DOWN)
             }
             Mode.MORE -> {
                 val before = mi
@@ -226,9 +261,48 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     // ------------------------------------------------------------------ drawing
 
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { sceneKey = ""; super.onSizeChanged(w, h, ow, oh) }
+
+    private fun clockText(cal: Calendar) = DateFormat.format(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm", cal).toString()
+    private fun dateText(cal: Calendar) = DateFormat.format("EEEE d MMMM", cal).toString()
+
+    /** Keeps the scene bitmap current: once a minute for Night (the clock is in it), once for Classic. Off the main thread. */
+    private fun ensureScene() {
+        if (look == Look.OLED || width == 0 || sceneBusy) return
+        val cal = Calendar.getInstance(Locale.getDefault())
+        val tx = clockText(cal); val dt = dateText(cal)
+        val key = if (look == Look.NIGHT) "N|$tx|$dt|${width}x$height" else "C|${width}x$height"
+        if (key == sceneKey) return
+        sceneBusy = true
+        val w = width; val h = height; val lk = look
+        worker.execute {
+            val bmp = runCatching {
+                if (lk == Look.NIGHT) SceneRenderer.render(context, SceneRenderer.NIGHT, tx, dt, w, h)
+                else SceneRenderer.photoOnly(context, SceneRenderer.NIGHT, w, h)
+            }.getOrNull()
+            main.post {
+                sceneBusy = false
+                if (bmp != null && lk == look) { val old = sceneBmp; sceneBmp = bmp; sceneKey = key; old?.recycle(); invalidate() }
+                else bmp?.recycle()
+            }
+        }
+    }
+
     override fun onDraw(c: Canvas) {
         val u = height / 1080f
-        c.drawColor(ground)
+        if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || look == Look.OLED) {
+            c.drawColor(if (look == Look.OLED && mode != Mode.MORE) Color.BLACK else ground)
+        } else {
+            ensureScene()
+            val b = sceneBmp
+            if (b != null) c.drawBitmap(b, 0f, 0f, null) else c.drawColor(ground)
+            if (look == Look.NIGHT) {   // the scrim couch-tv puts under the dock: clear at 60% of the height, half black at the bottom
+                paint.style = Paint.Style.FILL
+                paint.shader = LinearGradient(0f, height * 0.6f, 0f, height.toFloat(), 0x00000000, 0x80000000.toInt(), Shader.TileMode.CLAMP)
+                c.drawRect(0f, height * 0.6f, width.toFloat(), height.toFloat(), paint)
+                paint.shader = null
+            }
+        }
         drawClock(c, u)
         when (mode) {
             Mode.MORE -> drawMore(c, u)
@@ -237,14 +311,21 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         }
     }
 
+    /** OLED and Classic: a small clock and the date, top left. Night's big clock is part of the scene bitmap. */
     private fun drawClock(c: Canvas, u: Float) {
-        if (mode == Mode.MORE) return
-        val fmt = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm"
-        clockPaint.textSize = 250 * u
-        c.drawText(DateFormat.format(fmt, Calendar.getInstance()).toString(), width / 2f, 400 * u, clockPaint)
+        if (mode == Mode.MORE || look == Look.NIGHT || (mode == Mode.MENU && menuFrom == Mode.MORE)) return
+        val cal = Calendar.getInstance()
+        clockPaint.typeface = SceneRenderer.font(context)
+        clockPaint.textAlign = Paint.Align.LEFT
+        clockPaint.textSize = 150 * u
+        c.drawText(clockText(cal), 100 * u, 230 * u, clockPaint)
+        text.textAlign = Paint.Align.LEFT
+        text.textSize = 32 * u
+        c.drawText(dateText(cal), 104 * u, 285 * u, text)
     }
 
     private fun drawDock(c: Canvas, u: Float) {
+        if (look != Look.NIGHT) { drawHomeGrid(c, u); return }
         val n = store.line + 2
         val gap = 14 * u
         val tw = minOf(170 * u, (width - 120 * u - (n - 1) * gap) / n)
@@ -262,6 +343,35 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         text.textSize = 30 * u
         text.textAlign = Paint.Align.CENTER
         c.drawText(label, width / 2f, y + th + 80 * u, text)
+    }
+
+    /** OLED and Classic: the dock's apps, Settings and More apps as a grid, five across. */
+    private fun drawHomeGrid(c: Canvas, u: Float) {
+        val n = store.line + 2
+        val gap = 26 * u
+        val tw = 270 * u
+        val th = tw * 9f / 16f
+        val pitch = th + 62 * u
+        val top = 340 * u
+        val rows = ((height - top - 30 * u) / pitch).toInt().coerceAtLeast(1)
+        val focus = if (mode == Mode.MOVING) movingIndex else fi
+        val row = focus / gridCols
+        if (row < homeRow) homeRow = row
+        if (row >= homeRow + rows) homeRow = row - rows + 1
+        val x0 = (width - (gridCols * tw + (gridCols - 1) * gap)) / 2f
+        val dim = mode == Mode.MOVING
+        for (pass in 0..1) for (i in 0 until n) {
+            if ((i == focus) != (pass == 1)) continue
+            val r = i / gridCols - homeRow
+            if (r < 0 || r >= rows) continue
+            val x = x0 + (i % gridCols) * (tw + gap)
+            val y = top + r * pitch
+            tile(c, u, x, y, tw, th, i, i == focus && mode != Mode.MENU || i == focus, dim && i != focus, if (dim && i == focus) -14 * u else 0f)
+            text.textSize = 24 * u
+            text.textAlign = Paint.Align.CENTER
+            val label = TextUtils.ellipsize(dockTitle(i), text, tw, TextUtils.TruncateAt.END)
+            c.drawText(label, 0, label.length, x + tw / 2, y + th + 38 * u, text)
+        }
     }
 
     private fun dockTitle(i: Int): String = when {
