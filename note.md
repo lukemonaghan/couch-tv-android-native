@@ -241,3 +241,21 @@ as the home by hand: `cmd package set-home-activity com.lukemonaghan.tvhome/.Mai
 - First measurement, placeholder app: PSS 32.7 MB, RSS 121.7 MB (`dumpsys meminfo`). That is an emulator
   on a fast CPU, so **not comparable** to the 218 MB measured for the WebView app on the Kogan. Measure
   both builds on the same device before drawing a conclusion.
+
+## Step 1 done (2026-11-15): HOME activity, crash guard, Home button watch
+- Ported from upstream into `app/` (package renamed, WebView mentions removed, logic unchanged):
+  `CrashGuard.kt`, `FireWatch.kt`, `KeyWatch.kt`. `MainActivity` now does the crash-guard dance
+  (stand aside, `started`, `settled` after 20 s), `FireWatch.ensure`, the 10 s rebind, `isInFront()`,
+  and a stub `backToFirstTile()` for when there is a first tile. The manifest has the two services,
+  the boot/update receiver, the TCL placeholder input, the home `<queries>`, and the permissions.
+- APK: 851 KB debug.
+- Verified on the `tv30` emulator (stock home is `com.google.android.tvlauncher`, same as both TVs):
+  - with `WRITE_SECURE_SETTINGS` granted, starting the app switches the watch on by itself
+    (`enabled_accessibility_services` lists FireWatch, `accessibility_enabled=1`);
+  - the stock home opened on top is replaced by the app again;
+  - two unsettled starts make the guard stand aside: the stock home is on screen, and the watch leaves
+    it alone. Clearing `shared_prefs/crash_guard.xml` (`run-as`) puts the app back.
+- Not tested yet: boot-time restore after a reboot, Xiaomi, Amazon and Bell paths, KeyWatch's gear button,
+  Android 10 `moveToFront`. Those are upstream behaviours copied as is.
+- To run it on a device: `adb install -r app/build/outputs/apk/debug/app-debug.apk`, then
+  `adb shell pm grant com.lukemonaghan.tvhome android.permission.WRITE_SECURE_SETTINGS`, then start the app.

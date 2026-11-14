@@ -1,8 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Never granted on install: a computer grants it over ADB so Android cannot drop the Home button watch
+         after an update or a reboot (FireWatch.kt). The undo takes it back. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <!-- The TV's own homes: the Home button watch and the crash guard look for them. -->
+    <queries>
+        <package android:name="com.amazon.tv.launcher" />
+        <package android:name="com.google.android.apps.tv.launcherx" />
+        <package android:name="com.google.android.tvlauncher" />
+        <package android:name="com.quickplay.android.bellmediaplayer" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
 
     <application
         android:name=".App"
@@ -31,5 +49,50 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The Home button watch: puts this home back when the Home key (or the TV at power on) opens the
+             TV's own home, which stays switched on. It sees which window came forward and reads no screen
+             content. Off until a computer switches it on over ADB. -->
+        <service
+            android:name=".FireWatch"
+            android:exported="false"
+            android:label="Home button watch"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/fire_watch" />
+        </service>
+        <!-- The remote's gear button on TVs that never hand it to an app (KeyWatch.kt). Off until the person
+             at the TV switches it on in Accessibility. -->
+        <service
+            android:name=".KeyWatch"
+            android:exported="false"
+            android:label="Home gear button"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/key_watch" />
+        </service>
+        <!-- TCL only (upstream issue #94): an empty TV input TCL's boot manager counts as a reason to start the
+             app at boot. Off here, switched on at runtime on a TCL. -->
+        <service
+            android:name=".TclPlaceholderInput"
+            android:enabled="false"
+            android:exported="true"
+            android:label="Home"
+            android:permission="android.permission.BIND_TV_INPUT">
+            <intent-filter>
+                <action android:name="android.media.tv.TvInputService" />
+            </intent-filter>
+            <meta-data android:name="android.media.tv.input" android:resource="@xml/tcl_placeholder_input" />
+        </service>
+        <receiver android:name=".FireWatch$Restore" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
