@@ -346,7 +346,7 @@ class NowPlaying(
 
         val artS = 400 * u; val gap = 80 * u; val metaW = 640 * u
         val left = (w - (artS + gap + metaW)) / 2f
-        val top = (h - artS) / 2f
+        val top = (h - artS) / 2f - 110 * u   // lifted by a third of the space above, so the lyrics have room below
         // the record behind the cover, peeking out on the right
         val vr = 184 * u
         val vcx = left + artS + 48 * u - vr; val vcy = top + 16 * u + vr
