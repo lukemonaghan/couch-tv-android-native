@@ -8,7 +8,7 @@ import java.util.Locale
  * The "Music visualiser" page of Home settings: how the MilkDrop background behaves, and the preset browser.
  * Browsing goes Category, then Group, then single presets. OK on a category or group row opens it, and the first row of
  * each level downloads or removes everything in it. Nothing is installed until asked: [PresetStore] fetches only what is picked.
- * Prefs (home): np_viz, np_lyrics_hidden, viz_q, viz_fps, viz_secs, viz_bright (20 to 100), viz_autohide, viz_slow (see Visualiser.kt).
+ * Prefs (home): np_viz, np_eq, np_lyrics_hidden, viz_q, viz_fps, viz_secs, viz_bright (20 to 100), viz_autohide, viz_slow (see Visualiser.kt).
  */
 object VizSettings {
     /** "" is the top of the page; "mine" browses what is installed, "favs" lists the favourites, "get" browses the whole collection to download. */
@@ -141,6 +141,7 @@ object VizSettings {
         if (a == "") {
             out += IdleSettings.Item("MUSIC VISUALISER", header = true)
             out += IdleSettings.Item("Show the visualiser", "MilkDrop visuals behind the music view, moving with the music", check = p.getBoolean("np_viz", true)) { p.edit().putBoolean("np_viz", !p.getBoolean("np_viz", true)).apply() }
+            out += IdleSettings.Item("Show EQ bars", "The little bars that move with the music, above the progress bar", check = p.getBoolean("np_eq", true)) { p.edit().putBoolean("np_eq", !p.getBoolean("np_eq", true)).apply() }
             out += IdleSettings.Item("Picture quality", "Drawn smaller and scaled up. Lower is smoother on an older TV", QUALITY[p.getInt("viz_q", 1).coerceIn(0, 2)]) { p.edit().putInt("viz_q", (p.getInt("viz_q", 1) + 1) % 3).apply() }
             out += IdleSettings.Item("Frame rate", "30 is easier on the TV", "${p.getInt("viz_fps", 30)} per second") { p.edit().putInt("viz_fps", if (p.getInt("viz_fps", 30) == 30) 60 else 30).apply() }
             out += IdleSettings.Item("New preset every", "Left and right change it by hand", SECS.let { s -> val v = p.getInt("viz_secs", 45); if (v == 0) "Only by hand" else if (v >= 60) "${v / 60} min${if (v % 60 != 0) " ${v % 60} s" else ""}" else "$v seconds" }) { p.edit().putInt("viz_secs", next(SECS, p.getInt("viz_secs", 45))).apply() }

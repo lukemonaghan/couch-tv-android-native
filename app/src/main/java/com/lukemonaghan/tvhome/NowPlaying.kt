@@ -481,8 +481,8 @@ class NowPlaying(
         c.drawText(title, 0, title.length, right, titleBase, text)
         text.textAlign = Paint.Align.LEFT
 
-        // the equaliser (only without the visualiser, which replaces it): between the cover and the words, along the bottom of that band
-        if (!vizLive) {
+        // the equaliser, with or without the visualiser: between the cover and the words, along the bottom of that band
+        if (prefs.getBoolean("np_eq", true)) {
             val ex0 = m + artS + 70 * u; val ex1 = right - metaW - 70 * u
             if (ex1 - ex0 > 240 * u) {
                 val n = AudioViz.BANDS; val eqH = 110 * u
