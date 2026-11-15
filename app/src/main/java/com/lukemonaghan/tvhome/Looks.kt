@@ -30,7 +30,7 @@ import android.os.SystemClock
  * the optional video (a MediaPlayer surface, nothing in the heap).
  */
 class Looks(private val ctx: Context, private val prefs: SharedPreferences) {
-    enum class Glass { OFF, ON, LITE }
+    enum class Glass { OFF, ON, LITE, MUTED }
 
     private val old = Build.VERSION.SDK_INT < 24
     private fun bool(k: String, d: Boolean) = prefs.getBoolean(k, d)
@@ -45,6 +45,20 @@ class Looks(private val ctx: Context, private val prefs: SharedPreferences) {
     var amount: Int
         get() = prefs.getInt("glassAmount", 3).coerceIn(1, 5)
         set(v) { prefs.edit().putInt("glassAmount", v.coerceIn(1, 5)).apply() }
+    /** The Dark and Light looks: a solid colour instead of a scene, panels and words follow. */
+    val light get() = prefs.getString("look", null) == "LIGHT"
+    /** Cards and the music pill: the blurred picture behind them, how dark it is laid over (0 light, 1 medium, 2 dark) and how round the corners are (0 sharp, 1 normal, 2 round). */
+    var cardArt: Boolean
+        get() = bool("cardArt", true)
+        set(v) = put("cardArt", v)
+    var cardDark: Int
+        get() = prefs.getInt("cardDark", 1).coerceIn(0, 2)
+        set(v) { prefs.edit().putInt("cardDark", v.coerceIn(0, 2)).apply() }
+    var roundness: Int
+        get() = prefs.getInt("roundness", 1).coerceIn(0, 2)
+        set(v) { prefs.edit().putInt("roundness", v.coerceIn(0, 2)).apply() }
+    val scrimAlpha get() = intArrayOf(70, 115, 165)[cardDark]
+    val radiusK get() = floatArrayOf(0.55f, 1f, 1.45f)[roundness]
     var glassIcons: Boolean
         get() = bool("glassIcons", false)
         set(v) = put("glassIcons", v)
@@ -93,15 +107,17 @@ class Looks(private val ctx: Context, private val prefs: SharedPreferences) {
             lighter || videoPlaying -> 0f
             glass == Glass.OFF -> 28f                      // 1.75rem, the home's own panels
             glass == Glass.LITE -> 0f
+            glass == Glass.MUTED -> 32f
             else -> BLUR[amount - 1]
         }
-    val baseSaturation get() = if (glass == Glass.ON) SAT[amount - 1] else 1.7f
-    val baseBrightness get() = if (glass == Glass.ON) BRIGHT[amount - 1] else 1.06f
+    val baseSaturation get() = if (glass == Glass.ON) SAT[amount - 1] else if (glass == Glass.MUTED) 0.8f else 1.7f
+    val baseBrightness get() = if (glass == Glass.ON) BRIGHT[amount - 1] else if (glass == Glass.MUTED) 0.82f else 1.06f
 
     /** The panel recipe: a gradient of white at 160 degrees (three alphas at 0, 42 and 100 %) over a flat colour. */
-    class Panel(val plum: Boolean, val g0: Int, val g42: Int, val g100: Int, val flat: Int, val rich: Boolean)
+    class Panel(val plum: Boolean, val g0: Int, val g42: Int, val g100: Int, val flat: Int, val rich: Boolean, val muted: Boolean = false, val light: Boolean = false)
 
-    fun panel(): Panel = when (glass) {
+    fun panel(): Panel = if (light) Panel(false, 0, 0, 0, Color.argb(a(.66f), 255, 255, 255), false, light = true) else when (glass) {
+        Glass.MUTED -> Panel(false, 0, 0, 0, Color.argb(a(.74f), 18, 20, 28), false, muted = true)
         Glass.OFF -> Panel(true, 0, 0, 0, Color.argb(if (lighter) 158 else 82, 30, 20, 28), false)
         Glass.LITE -> Panel(false, a(.16f), a(.04f), a(.07f), Color.argb(a(.6f), 24, 24, 32), !lighter)
         Glass.ON -> when (amount) {
@@ -115,6 +131,8 @@ class Looks(private val ctx: Context, private val prefs: SharedPreferences) {
 
     /** A glass app icon tile (--gi-tint): same recipe, its own numbers; Lite is a flat grey tile. */
     fun iconPanel(): Panel = when {
+        light -> Panel(false, 0, 0, 0, Color.argb(a(.7f), 255, 255, 255), false, light = true)
+        glass == Glass.MUTED -> Panel(false, 0, 0, 0, Color.argb(a(.7f), 26, 28, 36), false, muted = true)
         glass == Glass.LITE -> Panel(false, 0, 0, 0, Color.argb(a(.55f), 36, 36, 44), false)
         else -> when (amount) {
             1 -> Panel(false, a(.36f), a(.14f), a(.20f), Color.argb(a(.34f), 24, 24, 32), true)

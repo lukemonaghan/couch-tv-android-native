@@ -125,16 +125,8 @@ class NowPlaying(
             val s = 480f / maxOf(it.width, it.height)
             if (s < 1f) Bitmap.createScaledBitmap(it, (it.width * s).toInt().coerceAtLeast(1), (it.height * s).toInt().coerceAtLeast(1), true) else it
         }
-        bg = art?.let { blurred(it) }
+        bg = art?.let { ArtBlur.soft(it) }
         art?.let { palette(it) } ?: run { glow1 = Color.rgb(88, 66, 160); glow2 = Color.rgb(40, 90, 160) }
-    }
-
-    /** A soft blur of the cover for the music view's background: shrunk to 12 px then grown to 48 px with smoothing, drawn stretched over the screen (about 9 KB, no blur library). */
-    private fun blurred(b: Bitmap): Bitmap {
-        val tiny = Bitmap.createScaledBitmap(b, 12, 12, true)
-        val soft = Bitmap.createScaledBitmap(tiny, 48, 48, true)
-        if (tiny !== b) tiny.recycle()
-        return soft
     }
 
     /** Two glow colours from the cover: its most vivid pixel and its average, at 16 x 16. */
@@ -230,8 +222,14 @@ class NowPlaying(
         val h = (if (night) 96 else 100) * u
         val x = if (night) (width - w) / 2 else width - 80 * u - w   // Night: centred under the clock, not in the shelf
         val y = if (night) 546 * u else 380 * u
-        val r = (if (night) 30 else 28) * u
+        val r = (if (night) 30 else 28) * u * floatArrayOf(0.55f, 1f, 1.45f)[prefs.getInt("roundness", 1).coerceIn(0, 2)]
         glass(c, x, y, x + w, y + h, r)
+        if (prefs.getBoolean("cardArt", true)) bg?.let { b ->   // the cover, blurred, fills the pill like it fills the music view
+            rect.set(x, y, x + w, y + h); path.reset(); path.addRoundRect(rect, r, r, Path.Direction.CW)
+            c.save(); c.clipPath(path); paint.isFilterBitmap = true; paint.alpha = 255; paint.style = Paint.Style.FILL
+            ArtBlur.fill(c, b, rect, paint)
+            paint.color = Color.argb(intArrayOf(70, 115, 165)[prefs.getInt("cardDark", 1).coerceIn(0, 2)], 0, 0, 0); c.drawRect(rect, paint); c.restore()
+        }
         val pad = (if (night) 16 else 12) * u
         val artS = (if (night) 68 else 76) * u
         val ax = x + pad; val ay = y + (h - artS) / 2
@@ -340,7 +338,7 @@ class NowPlaying(
         paint.shader = null
         bg?.let { b ->   // the cover, blurred, over the whole screen, darkened so the words stay easy to read
             rect.set(0f, 0f, w.toFloat(), h.toFloat()); paint.isFilterBitmap = true; paint.alpha = 255
-            c.drawBitmap(b, null, rect, paint)
+            ArtBlur.fill(c, b, rect, paint)
             paint.color = Color.argb(120, 0, 0, 0); c.drawRect(rect, paint)
         }
 

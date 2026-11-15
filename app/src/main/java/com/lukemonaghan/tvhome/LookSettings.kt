@@ -39,9 +39,13 @@ class LookSettings(private val ctx: Context, private val prefs: SharedPreference
         val r = ArrayList<LookRow>()
         r.add(LookRow("GLASS", header = true))
         r.add(LookRow("Glass panels", "Clear, softly blurred panels behind the clock, Keep watching and the apps",
-            when (looks.glass) { Looks.Glass.ON -> "On"; Looks.Glass.LITE -> "On, no blur"; else -> "Off" }) {
-            looks.glass = when (looks.glass) { Looks.Glass.OFF -> Looks.Glass.ON; Looks.Glass.ON -> Looks.Glass.LITE; Looks.Glass.LITE -> Looks.Glass.OFF }
+            when (looks.glass) { Looks.Glass.ON -> "Glass"; Looks.Glass.LITE -> "Glass, no blur"; Looks.Glass.MUTED -> "Muted blur"; else -> "Off" }) {
+            looks.glass = when (looks.glass) { Looks.Glass.OFF -> Looks.Glass.ON; Looks.Glass.ON -> Looks.Glass.LITE; Looks.Glass.LITE -> Looks.Glass.MUTED; Looks.Glass.MUTED -> Looks.Glass.OFF }
         })
+        r.add(LookRow("Card picture", "The show or album picture, blurred, fills each Keep watching card and the music bar", check = looks.cardArt) { looks.cardArt = !looks.cardArt })
+        r.add(LookRow("Card picture darkness", "How much shade sits over the picture so words stay easy to read",
+            listOf("Light", "Medium", "Dark")[looks.cardDark]) { looks.cardDark = (looks.cardDark + 1) % 3 })
+        r.add(LookRow("Corners", "How round the cards and the music bar are", listOf("Sharp", "Normal", "Round")[looks.roundness]) { looks.roundness = (looks.roundness + 1) % 3 })
         r.add(LookRow("Moving tiles", "The focused tile sways slowly", check = looks.movingTiles) { looks.movingTiles = !looks.movingTiles })
         r.add(LookRow("Lighter home", "For a slow box: no blur, no soft shadows, no sway", check = looks.lighter) { looks.lighter = !looks.lighter })
         r.add(LookRow("Glass app icons", "Each app's symbol in light glass, its colours back when you move onto it", check = looks.glassIcons) { looks.glassIcons = !looks.glassIcons })
