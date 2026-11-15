@@ -21,6 +21,7 @@ object QuickButtons {
         Kind("sleep", "Sleep timer", "Sleep timer", "Lets the TV go to sleep after 15, 30, 60 or 90 minutes"),
         Kind("look", "Look switch", "Look", "Flips between Night, OLED and Classic"),
         Kind("input", "Input list", "Input", "Opens a list of the TV's inputs"),
+        Kind("soundscape", "Soundscape", "Sound", "Rain, fire, waves or brown noise, from the top row"),
         Kind("screen_off", "Screen off", "Screen off", "Turns the picture off while the sound keeps playing. Any button wakes it"),
         Kind("screensaver", "Screensaver", "Screensaver", "Starts the TV's photo screensaver now"),
         Kind("headphones", "Headphones", "Headphones", "Opens the TV's Bluetooth screen to pick headphones"),

@@ -134,6 +134,17 @@
         </service>
         <!-- What Android's installer answers after an update was handed to it (Updater.kt). Only its own PendingIntent reaches it. -->
         <receiver android:name=".Updater$Result" android:exported="false" />
+        <!-- Lets the home read what other apps are playing (Now playing). It does nothing with notifications; it is
+             only the list Android wants an app on before it hands over media sessions. See MediaListener.kt. -->
+        <service
+            android:name=".MediaListener"
+            android:exported="true"
+            android:label="Home: Now playing"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
         <receiver android:name=".FireWatch$Restore" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

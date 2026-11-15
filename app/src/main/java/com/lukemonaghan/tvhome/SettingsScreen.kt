@@ -27,7 +27,7 @@ class SettingsScreen(
     private class Row(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
                        val header: Boolean = false, val avatar: Person? = null, val press: (() -> Unit)? = null)
 
-    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "Smart home", "Updates", "About")
+    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "Idle and sound", "Smart home", "Updates", "About")
     private var page = 0
     private var inRows = false
     private var row = 0
@@ -141,6 +141,7 @@ class SettingsScreen(
         }
         "Smart home" -> PlatformPages.smart(ctx).map(::pr)
         "Updates" -> PlatformPages.updates(ctx).map(::pr)
+        "Idle and sound" -> IdleSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.press) }
         else -> PlatformPages.aboutTop(ctx).map(::pr) + listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
             Row("Android settings", "Wi-Fi, display, accounts and the rest") { act.openSettings() },

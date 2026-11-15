@@ -16,7 +16,7 @@ import android.view.KeyEvent
 import java.lang.ref.WeakReference
 
 /** The home: one Activity holding one custom view (HomeView). */
-class MainActivity : Activity(), HomeActions {
+class MainActivity : Activity(), HomeActions, IdleHost {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var resumed = false
     private lateinit var store: AppStore
@@ -150,12 +150,27 @@ class MainActivity : Activity(), HomeActions {
     }
 
     private var sleepTimer: Runnable? = null
+    @Volatile private var sleepEnds = 0L
+
+    override fun sleepEndsAt(): Long = sleepEnds
+
+    /** Smart Idle's "screen off": brightness to 0 while sound and the TV carry on. */
+    override fun setScreenDark(dark: Boolean) {
+        main.post {
+            runCatching {
+                val lp = window.attributes
+                lp.screenBrightness = if (dark) 0.0f else android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = lp
+            }
+        }
+    }
 
     /** The sleep timer: after [minutes] the screen is let go to sleep. 0 cancels. Needs "Modify system settings" (WRITE_SETTINGS), see the install notes. */
     override fun setSleepTimer(minutes: Int) {
-        sleepTimer?.let { main.removeCallbacks(it) }; sleepTimer = null
+        sleepTimer?.let { main.removeCallbacks(it) }; sleepTimer = null; sleepEnds = 0L
         if (minutes <= 0) return
-        val r = Runnable { sleepTimer = null; sleepNow() }
+        sleepEnds = System.currentTimeMillis() + minutes * 60_000L
+        val r = Runnable { sleepTimer = null; sleepEnds = 0L; sleepNow() }
         sleepTimer = r
         main.postDelayed(r, minutes * 60_000L)
     }
