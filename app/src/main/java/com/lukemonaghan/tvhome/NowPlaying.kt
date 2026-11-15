@@ -56,6 +56,8 @@ class NowPlaying(
     private var lastTrackKey = ""
     private var pausedAt = 0L                 // a paused song stays on the card for ten minutes
     private var started = false
+    private var stoppedKey: String? = null
+    private var stopAt = 0L
 
     var focused = false                       // the remote is on the card
     private var btn = 1
@@ -107,6 +109,13 @@ class NowPlaying(
         if (playing && ps != null) pos += ((SystemClock.elapsedRealtime() - ps.lastPositionUpdateTime) * ps.playbackSpeed).toLong()
         val dur = md.getLong(MediaMetadata.METADATA_KEY_DURATION)
         val key = "$title\n$artist"
+        if (stoppedKey != null) {   // Stop was pressed: the card stays away until something else plays (or this song is started again)
+            if (key == stoppedKey && (!playing || SystemClock.uptimeMillis() - stopAt < 5000L)) {
+                if (track != null) { track = null; ambientOpen = false; changed(false) }
+                return
+            }
+            stoppedKey = null
+        }
         if (key != artKey) loadArt(md, key)
         val newTrack = key != lastTrackKey
         track = Track(pick.packageName, app, title, artist, album, playing, if (pos < 0) 0 else pos, dur, pick)
@@ -160,7 +169,7 @@ class NowPlaying(
     /** A key while the card (or the full screen view) has the remote. True when it was used here; false lets the home move off the card. */
     fun key(code: Int): Boolean {
         if (ambientOpen) {
-            val n = 4
+            val n = 5
             when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (ambBtn > 0) ambBtn--
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (ambBtn < n - 1) ambBtn++
@@ -188,7 +197,10 @@ class NowPlaying(
         val t = track ?: return
         val tc = t.controller.transportControls
         if (ambientOpen) {
-            when (ambBtn) { 0 -> tc.skipToPrevious(); 1 -> toggle(t); 2 -> tc.skipToNext(); 3 -> launch(t.pkg) }
+            when (ambBtn) { 0 -> tc.skipToPrevious(); 1 -> toggle(t); 2 -> tc.skipToNext(); 3 -> { stoppedKey = "${t.title}\n${t.artist}"; stopAt = SystemClock.uptimeMillis(); tc.pause(); tc.stop()
+                    // an app that ignores both still gets the remote's own Pause key
+                    runCatching { for (a in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) t.controller.dispatchMediaButtonEvent(KeyEvent(a, KeyEvent.KEYCODE_MEDIA_PAUSE)) }
+                    ambientOpen = false; viz.stop(); track = null; focused = false; changed(false); main.postDelayed({ refresh() }, 700L); return }; 4 -> launch(t.pkg) }
             main.postDelayed({ refresh() }, 700L); return
         }
         ambientOpen = true; ambientDismissed = false; ambBtn = 1   // OK on the card opens the full screen music view
@@ -313,6 +325,7 @@ class NowPlaying(
         when (kind) {
             "play" -> { path.moveTo(cx - s * 0.6f, cy - s); path.lineTo(cx + s, cy); path.lineTo(cx - s * 0.6f, cy + s); path.close() }
             "pause" -> { path.addRect(cx - s * 0.8f, cy - s, cx - s * 0.2f, cy + s, Path.Direction.CW); path.addRect(cx + s * 0.2f, cy - s, cx + s * 0.8f, cy + s, Path.Direction.CW) }
+            "stop" -> path.addRect(cx - s * 0.8f, cy - s * 0.8f, cx + s * 0.8f, cy + s * 0.8f, Path.Direction.CW)
             "prev" -> { path.addRect(cx - s, cy - s * 0.9f, cx - s * 0.7f, cy + s * 0.9f, Path.Direction.CW)
                 path.moveTo(cx + s, cy - s * 0.9f); path.lineTo(cx - s * 0.6f, cy); path.lineTo(cx + s, cy + s * 0.9f); path.close() }
             "next" -> { path.addRect(cx + s * 0.7f, cy - s * 0.9f, cx + s, cy + s * 0.9f, Path.Direction.CW)
@@ -406,7 +419,7 @@ class NowPlaying(
         y += 14 * u + 32 * u
         // buttons: previous, play or pause (bigger), next, and the app's name
         var bx = mx
-        val kinds = listOf("prev", if (t.playing) "pause" else "play", "next")
+        val kinds = listOf("prev", if (t.playing) "pause" else "play", "next", "stop")
         for ((i, k) in kinds.withIndex()) {
             val r = (if (i == 1) 40 else 34) * u
             val f = ambBtn == i
@@ -421,7 +434,7 @@ class NowPlaying(
         val open = t.app
         text.typeface = Fonts.semibold(ctx); text.textSize = 18 * u
         val ow = text.measureText(open) + 48 * u
-        val f = ambBtn == 3
+        val f = ambBtn == 4
         rect.set(bx, y + 40 * u - 34 * u, bx + ow, y + 40 * u + 34 * u)
         paint.color = if (f) Color.WHITE else Color.argb(26, 255, 255, 255)
         c.drawRoundRect(rect, 34 * u, 34 * u, paint)

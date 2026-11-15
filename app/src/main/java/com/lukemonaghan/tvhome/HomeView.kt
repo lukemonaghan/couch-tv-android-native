@@ -503,7 +503,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 }
                 invalidate()
             }
-            Mode.NP -> np.press()
+            Mode.NP -> { np.press(); if (!np.ambientOpen) { np.blur(); mode = Mode.DOCK } }
             Mode.CARDS -> cards().getOrNull(ci)?.let { if (CustomCards.isCustom(it)) Plat.openCustom(it) else act.openCard(it.pkg, it.intentUri) }
             Mode.MORE -> store.items.getOrNull(mi)?.let { launch(it) }
             Mode.MENU -> chooseMenu()
