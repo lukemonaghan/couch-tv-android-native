@@ -91,13 +91,37 @@ class SettingsScreen(
                 },
             )
         }
-        "Apps" -> listOf(
-            Row("Apps in the dock", "The rest are behind More apps", "${store.dockSize}") {
-                store.dockSize = if (store.dockSize >= 10) 3 else store.dockSize + 1
-                prefs.edit().putInt("dockSize", store.dockSize).apply()
-                store.reload()
-            },
-        )
+        "Apps" -> {
+            val list = mutableListOf(
+                Row("Apps in the dock", "The rest are behind More apps", "${store.dockSize}") {
+                    store.dockSize = if (store.dockSize >= 10) 3 else store.dockSize + 1
+                    prefs.edit().putInt("dockSize", store.dockSize).apply()
+                    store.reload()
+                },
+            )
+            // OK on an app moves it between home, More apps and hidden; the focus follows it
+            fun app(it: AppItem, where: String) = Row(it.label, value = where) {
+                val title = it.label
+                store.cycle(it.pkg)
+                row = rows().indexOfFirst { r -> r.title == title && !r.header }.coerceAtLeast(0)
+            }
+            list += Row("ON HOME (${store.line} OF ${store.dockSize})", header = true)
+            store.dock.forEach { list += app(it, "On home") }
+            list += Row("IN MORE APPS", header = true)
+            store.items.drop(store.line).forEach { list += app(it, "More apps") }
+            if (store.hiddenItems.isNotEmpty()) {
+                list += Row("HIDDEN", header = true)
+                store.hiddenItems.forEach { list += app(it, "Hidden") }
+            }
+            list += Row("TV INPUTS", header = true)
+            if (store.detectedInputs.isEmpty()) list += Row("No TV inputs found", "This TV lists none to put on the home")
+            else store.detectedInputs.forEach { p ->
+                val on = p.id in store.pinnedInputs
+                list += Row(p.label.ifEmpty { if (p.type == "hdmi") "HDMI" else "Input" }, p.devices.joinToString(", ").ifEmpty { "Put it on the home as a tile" }, check = on) { store.setPinned(p.id, !on) }
+            }
+            list += Row("OK moves an app between home, More apps and hidden", "Hold OK on an app on the home to change the order")
+            list
+        }
         "People" -> {
             val ppl = prefs.getString("people", null)?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
             fun save(l: List<String>) { prefs.edit().putString("people", l.joinToString("|")).apply() }
@@ -113,6 +137,7 @@ class SettingsScreen(
             listOf(
                 Row("Sleep timer", "Lets the TV go to sleep after 15, 30, 60 or 90 minutes", check = "sleep" in q) { toggle("sleep") },
                 Row("Look switch", "Flips between Night, OLED and Classic", check = "look" in q) { toggle("look") },
+                Row("Input list", if (store.inputsAvailable) "Opens a list of the TV's inputs" else "This TV has no input list", check = "input" in q) { toggle("input") },
             )
         }
         else -> listOf(
