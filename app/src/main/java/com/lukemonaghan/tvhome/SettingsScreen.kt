@@ -25,6 +25,9 @@ class SettingsScreen(
     private class Row(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
                        val header: Boolean = false, val press: (() -> Unit)? = null)
 
+    private val lookSet by lazy { LookSettings(ctx, prefs, act, changed) }
+    private fun LookRow.row() = Row(title, note, value, check, header, press)
+
     private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "About")
     private var page = 0
     private var inRows = false
@@ -73,8 +76,7 @@ class SettingsScreen(
                 Row("Follow the time of day", "Dawn, day, sunset and night pick the scene and photo", check = prefs.getBoolean("timeSync", true)) {
                     prefs.edit().putBoolean("timeSync", !prefs.getBoolean("timeSync", true)).apply()
                 },
-                Row("SCENES", header = true),
-            ) + SceneRenderer.ALL.map { sp ->
+            ) + lookSet.photoRows(look).map { it.row() } + Row("SCENES", header = true) + SceneRenderer.ALL.map { sp ->
                 val on = enabledScenes()
                 Row(sp.label, check = sp.id in on) {
                     val now = enabledScenes().toMutableList()
@@ -89,7 +91,7 @@ class SettingsScreen(
                 Row("Clock", "", when (prefs.getInt("clock", 0)) { 1 -> "12 hour"; 2 -> "24 hour"; else -> "Follow the TV" }) {
                     prefs.edit().putInt("clock", (prefs.getInt("clock", 0) + 1) % 3).apply()
                 },
-            )
+            ) + lookSet.rows().map { it.row() }
         }
         "Apps" -> listOf(
             Row("Apps in the dock", "The rest are behind More apps", "${store.dockSize}") {
