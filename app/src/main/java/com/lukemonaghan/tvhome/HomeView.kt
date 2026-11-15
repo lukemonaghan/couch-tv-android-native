@@ -147,8 +147,12 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     fun people(): List<String> = ppl.list().map { it.name }
     private fun quick(): List<String> = QuickButtons.enabled(prefs).filter { quickSys.available(it) && (it != "input" || store.inputsAvailable) }
     private val qAnchor = HashMap<String, FloatArray>()   // each quick button's right edge and bottom, where the Input menu hangs from
-    private val sleepOptions = listOf(0, 15, 30, 60, 90)
-    private var sleepIdx = 0
+    /** Minutes left on the sleep timer, 0 when none is running (the Activity keeps the timer). */
+    private fun sleepLeft(): Int {
+        val ends = (act as? IdleHost)?.sleepEndsAt() ?: 0L
+        return if (ends <= 0L) 0 else Math.ceil((ends - System.currentTimeMillis()) / 60000.0).toInt().coerceAtLeast(0)
+    }
+    private fun lookLabel() = when (look) { Look.NIGHT -> "OLED Cinema look"; Look.OLED -> "Classic look"; Look.CLASSIC -> "Night look" }
 
     private class Top(val kind: String, val label: String = "")
     private fun topItems(): List<Top> {
@@ -450,7 +454,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 when (t.kind) {
                     "person" -> ppl.list().getOrNull(ti)?.let { switchTo(it.id) }
                     "head" -> { peopleUi.open(); mode = Mode.POP }
-                    "sleep" -> { sleepIdx = (sleepIdx + 1) % sleepOptions.size; act.setSleepTimer(sleepOptions[sleepIdx]); looks.sleepSet(sleepOptions[sleepIdx]) }
+                    "sleep" -> qAnchor["sleep"].let { a -> SleepMenu.show(context, a?.get(0) ?: (width - 80 * height / 1080f), a?.get(1) ?: (148 * height / 1080f), sleepLeft() > 0) { m -> act.setSleepTimer(m); looks.sleepSet(m); invalidate() } }
                     "look" -> cycleLook()
                     "input" -> qAnchor["input"].let { a -> InputMenu.show(context, a?.get(0) ?: (width - 80 * height / 1080f), a?.get(1) ?: (148 * height / 1080f)) }
                     "soundscape" -> idle.cycleSound()
@@ -810,7 +814,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 rect.set(x, 66 * u, x + pw[i], 102 * u)
                 if (focus) {
                     paint.style = Paint.Style.FILL; paint.color = Color.WHITE
-                    val g = 3 * u; rect.inset(-g, -g); c.drawRoundRect(rect, 24 * u + g, 24 * u + g, paint); rect.inset(g, g)
+                    val g = 3 * u; paint.style = Paint.Style.STROKE; paint.strokeWidth = g; rect.inset(-g / 2, -g / 2); c.drawRoundRect(rect, 24 * u + g / 2, 24 * u + g / 2, paint); rect.inset(g / 2, g / 2); paint.style = Paint.Style.FILL
                 }
                 if (on || focus) { paint.style = Paint.Style.FILL; paint.color = if (on) Color.WHITE else Color.argb(41, 255, 255, 255); c.drawRoundRect(rect, 24 * u, 24 * u, paint) }
                 text.color = if (on) Color.rgb(17, 17, 17) else if (focus) Color.WHITE else Color.argb(199, 255, 255, 255)
@@ -826,8 +830,13 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         for (q in quick) {
             val idx = items.indexOf(q)
             val focus = mode == Mode.TOP && ti == idx
-            val label = if (q.kind == "sleep" && sleepOptions[sleepIdx] > 0) "${sleepOptions[sleepIdx]}m" else ""
-            val w = 88 * u.coerceAtLeast(0.01f) + (if (label.isNotEmpty()) 70 * u else 0f) + 4 * u
+            val label = when {
+                q.kind == "sleep" && sleepLeft() > 0 -> "Off in ${sleepLeft()} min"
+                q.kind == "soundscape" && idle.soundType() != "off" -> idle.soundLabel()
+                else -> ""
+            }
+            text.textSize = 23 * u; text.typeface = Fonts.semibold(context)
+            val w = if (label.isEmpty()) 88 * u + 4 * u else 28 * u + 36 * u + 10 * u + text.measureText(label) + 28 * u
             val l = right - w
             qAnchor.getOrPut(q.kind) { FloatArray(2) }.also { it[0] = right; it[1] = 148 * u }
             if (focus) {
@@ -837,10 +846,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             if (focus) { paint.style = Paint.Style.FILL; paint.color = Color.WHITE; rect.set(l, 60 * u, right, 148 * u); c.drawRoundRect(rect, 44 * u, 44 * u, paint) }
             else glass(c, l, 60 * u, right, 148 * u, 44 * u)
             val fg = if (focus) Color.rgb(17, 17, 17) else Color.WHITE
-            quickIcon(c, u, q.kind, if (label.isNotEmpty()) l + 24 * u + 18 * u else (l + right) / 2f, 104 * u, fg)
+            quickIcon(c, u, q.kind, if (label.isNotEmpty()) l + 28 * u + 18 * u else (l + right) / 2f, 104 * u, fg)
             if (label.isNotEmpty()) {
                 text.color = fg; text.textSize = 23 * u; text.typeface = Fonts.semibold(context)
-                c.drawText(label, l + 24 * u + 18 * u + 28 * u, 112 * u, text); text.color = Color.WHITE
+                c.drawText(label, l + 28 * u + 36 * u + 10 * u, 112 * u, text); text.color = Color.WHITE
             }
             right = l - 16 * u
         }
@@ -862,7 +871,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             for (i in people.indices) {
                 val on = i == sel; val focus = mode == Mode.TOP && ti == i
                 rect.set(x, 66 * u, x + pw[i], 102 * u)
-                if (focus) { paint.color = Color.WHITE; val g = 3 * u; rect.inset(-g, -g); c.drawRoundRect(rect, 24 * u + g, 24 * u + g, paint); rect.inset(g, g) }
+                if (focus) { paint.color = Color.WHITE; val g = 3 * u; paint.style = Paint.Style.STROKE; paint.strokeWidth = g; rect.inset(-g / 2, -g / 2); c.drawRoundRect(rect, 24 * u + g / 2, 24 * u + g / 2, paint); rect.inset(g / 2, g / 2); paint.style = Paint.Style.FILL }
                 if (on || focus) { paint.color = if (on) Color.WHITE else Color.argb(41, 255, 255, 255); c.drawRoundRect(rect, 24 * u, 24 * u, paint) }
                 text.color = if (on) Color.rgb(17, 17, 17) else if (focus) Color.WHITE else Color.argb(199, 255, 255, 255)
                 c.drawText(people[i].label, x + 20 * u, 91 * u, text)
@@ -874,8 +883,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         var right = width - 80 * u
         for (q in items.filter { it.kind != "person" && it.kind != "head" }.asReversed()) {
             val idx = items.indexOf(q); val focus = mode == Mode.TOP && ti == idx
-            val set = (q.kind == "sleep" && sleepOptions[sleepIdx] > 0) || (q.kind == "soundscape" && idle.soundType() != "off")
-            val label = when { q.kind == "look" -> "Look"; q.kind == "soundscape" -> idle.soundLabel(); q.kind == "input" -> "Input"; set -> "${sleepOptions[sleepIdx]} min"; q.kind != "sleep" -> QuickButtons.pill(q.kind); else -> "Sleep timer" }
+            val set = (q.kind == "sleep" && sleepLeft() > 0) || (q.kind == "soundscape" && idle.soundType() != "off")
+            val label = when { q.kind == "look" -> lookLabel(); q.kind == "soundscape" -> idle.soundLabel(); q.kind == "input" -> "Input"; set -> "Off in ${sleepLeft()} min"; q.kind != "sleep" -> QuickButtons.pill(q.kind); else -> "Sleep timer" }
             val w = 16 * u + 24 * u + 10 * u + text.measureText(label) + 20 * u
             val l = right - w
             qAnchor.getOrPut(q.kind) { FloatArray(2) }.also { it[0] = right; it[1] = 360 * u }

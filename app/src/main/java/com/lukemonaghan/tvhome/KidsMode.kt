@@ -242,8 +242,11 @@ class KidsMode(
             c.drawRoundRect(rect, r + g, r + g, paint)
         }
         if (focused) {
-            paint.color = colour; rect.set(x - 12 * u, y - 12 * u, x + w + 12 * u, y + h + 12 * u); c.drawRoundRect(rect, r + 12 * u, r + 12 * u, paint)
-            paint.color = Color.WHITE; rect.set(x - 6 * u, y - 6 * u, x + w + 6 * u, y + h + 6 * u); c.drawRoundRect(rect, r + 6 * u, r + 6 * u, paint)
+            // two rings drawn as strokes, so the poster's own translucent body is not covered
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = 6 * u
+            paint.color = colour; rect.set(x - 9 * u, y - 9 * u, x + w + 9 * u, y + h + 9 * u); c.drawRoundRect(rect, r + 9 * u, r + 9 * u, paint)
+            paint.color = Color.WHITE; rect.set(x - 3 * u, y - 3 * u, x + w + 3 * u, y + h + 3 * u); c.drawRoundRect(rect, r + 3 * u, r + 3 * u, paint)
+            paint.style = Paint.Style.FILL
         }
         rect.set(x, y, x + w, y + h)
         paint.shader = LinearGradient(x, y, x + w * 0.35f, y + h, Color.argb(41, 255, 255, 255), Color.argb(13, 255, 255, 255), Shader.TileMode.CLAMP)
@@ -290,7 +293,7 @@ class KidsMode(
         if (focused) { val cx = x + 64 * u; val cy = y + 52 * u; c.translate(cx, cy); c.scale(1.1f, 1.1f); c.translate(-cx, -cy) }
         val fx = x + 12 * u
         paint.style = Paint.Style.FILL
-        if (focused) { paint.color = Color.WHITE; rect.set(fx - 5 * u, y - 5 * u, fx + fs + 5 * u, y + fs + 5 * u); c.drawRoundRect(rect, r + 5 * u, r + 5 * u, paint) }
+        if (focused) { paint.style = Paint.Style.STROKE; paint.strokeWidth = 4 * u; paint.color = Color.WHITE; rect.set(fx - 2 * u, y - 2 * u, fx + fs + 2 * u, y + fs + 2 * u); c.drawRoundRect(rect, r + 2 * u, r + 2 * u, paint); paint.style = Paint.Style.FILL }
         rect.set(fx, y, fx + fs, y + fs)
         paint.color = Color.argb(31, 255, 255, 255); c.drawRoundRect(rect, r, r, paint)
         val b = icons.square(a, fs.toInt())
