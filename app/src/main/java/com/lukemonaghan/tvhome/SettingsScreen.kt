@@ -153,6 +153,7 @@ class SettingsScreen(
         "Music visualiser" -> VizSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.preview, it.menu, it.press) }
         else -> PlatformPages.aboutTop(ctx).map(::pr) + listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
+            Row("Licences", "projectM LGPL-2.1, fonts OFL-1.1, couch-tv MIT", "Source: github.com/lukemonaghan"),
             Row("Android settings", "Wi-Fi, display, accounts and the rest") { act.openSettings() },
         ) + PlatformPages.aboutBottom(prefs, store) { changed() }.map(::pr)
     }

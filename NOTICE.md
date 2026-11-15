@@ -45,8 +45,27 @@ private to the machine they were made on.
 
 | What | Licence | How it is used |
 |---|---|---|
-| [projectM](https://github.com/projectM-visualizer/projectm), the MilkDrop player | LGPL-2.1 | Built by `tools/build-native.sh` from the OpenGL ES 2.0 fork [bbangert/projectm](https://github.com/bbangert/projectm) (branch `up-es2`, pinned commit in the script) as a separate `libprojectM-4.so` in the app. Not linked statically, so it can be swapped for another build. Its source is at the address above. |
-| [presets-cream-of-the-crop](https://github.com/projectM-visualizer/presets-cream-of-the-crop) | see the repository's `LICENSE.md` | Nothing is bundled. The user picks presets in Settings and the app downloads them from GitHub (pinned commit in `PresetStore.kt`) into its own storage. `app/src/main/assets/presets/index.tsv` lists the file names and sizes only. |
-| [presets-milkdrop-texture-pack](https://github.com/projectM-visualizer/presets-milkdrop-texture-pack) | see the repository | Downloaded the same way, on request. |
+| [projectM](https://github.com/projectM-visualizer/projectm), the MilkDrop player | LGPL-2.1 | See "projectM and the LGPL" below. |
+| [presets-cream-of-the-crop](https://github.com/projectM-visualizer/presets-cream-of-the-crop) | the repository's own terms | Nothing is bundled. The user picks presets in Settings and the app downloads them from GitHub (pinned commit in `PresetStore.kt`) into its own storage. `app/src/main/assets/presets/index.tsv` and `starter.txt` list file names and sizes only. Each preset belongs to its author. |
+| [presets-milkdrop-texture-pack](https://github.com/projectM-visualizer/presets-milkdrop-texture-pack) | the repository's own terms | Downloaded the same way, on request. |
 
 `app/src/main/jniLibs/` is not committed: run `tools/build-native.sh` (it needs the Android NDK). Without those libraries the app builds and runs, and the music view keeps its blurred cover.
+
+## projectM and the LGPL
+
+An APK built with the music visualiser contains `libprojectM-4.so`, which is projectM (Copyright (C) 2003-2024 projectM Team),
+licensed under the GNU Lesser General Public License, version 2.1. Your rights under that licence:
+
+- **The licence text** is in `licenses/projectM-LGPL-2.1.txt`, and projectM's own notice is in `licenses/projectM-COPYING.txt`.
+- **The source** of the library in the APK is projectM with an OpenGL ES 2.0 backend by bbangert
+  (https://github.com/bbangert/projectm, branch `up-es2`). We build it unmodified from commit `e4d1f00d8dad4f7a264fc143187da2a0412c86b8`.
+  A mirror of that exact source is at https://github.com/lukemonaghan/projectm (branch `up-es2`), so it stays available.
+  `tools/build-native.sh` is the exact build recipe (compiler, flags, options).
+- **It is a separate library.** `libprojectM-4.so` is not linked into the app's own code; the app loads it at run time through
+  `native/pmbridge.cpp` (our own thin wrapper, MIT like the rest of this repository). You can replace it with your own build:
+  run `tools/build-native.sh` (or put your own `libprojectM-4.so` for each ABI into `app/src/main/jniLibs/<abi>/`) and build the APK again.
+- **Its bundled libraries** (glad, glm, hlslparser, projectm-eval, stb_image) keep their own licences; they are in the `vendor/` folder
+  of the source above and in projectM's `LICENSE.txt`.
+- The app also shows a short licence note in Settings, About.
+
+Fonts: the licence text is in `licenses/OFL-1.1.txt`.

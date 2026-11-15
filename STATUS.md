@@ -3,7 +3,7 @@
 Read `CLAUDE.md` and `note.md` first. This file says where the work stopped.
 
 ## Where things are
-- Repo: `/home/lukem/Documents/git/couch-tv-android-native`, local git only, no remote. Branch `main`, head `f064be0` plus later commits (see `git log`).
+- Repo: `/home/lukem/Documents/git/couch-tv-android-native`, published at github.com/lukemonaghan/couch-tv-android-native (public). Branch `main`, head `f064be0` plus later commits (see `git log`).
 - Build: `export JAVA_HOME=/home/lukem/Documents/git/couch-tv/build/jdk ANDROID_HOME=/home/lukem/Documents/git/couch-tv/build/android-sdk; ./gradlew --no-daemon -q assembleDebug`
 - Everything merged into `main` builds. Nothing from the merged feature branches has been run on the emulator or a TV yet.
 

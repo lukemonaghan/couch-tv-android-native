@@ -13,8 +13,10 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 : "${ANDROID_HOME:?set ANDROID_HOME to the Android SDK}"
 NDK=${NDK:-$(ls -d "$ANDROID_HOME"/ndk/* | sort | tail -1)}
-FORK=https://github.com/bbangert/projectm.git
-FORK_COMMIT=e4d1f00d     # branch up-es2 (OpenGL ES 2.0 backend + HLSL to GLSL ES 1.00 translation)
+# projectM with an OpenGL ES 2.0 backend (branch up-es2, HLSL to GLSL ES 1.00 translation) by bbangert, from github.com/bbangert/projectm.
+# This is an unmodified mirror of it, kept so the LGPL source for the shipped library stays available (see NOTICE.md).
+FORK=https://github.com/lukemonaghan/projectm.git
+FORK_COMMIT=e4d1f00d     # branch up-es2
 SRC="$ROOT/build/native/projectm"
 BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 ABIS=${*:-armeabi-v7a arm64-v8a x86}
