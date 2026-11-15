@@ -443,7 +443,7 @@ class NowPlaying(
         }
         val pos = if (t.playing) t.position + (SystemClock.uptimeMillis() - lastReadAt()) else t.position
         val keepLyr = vizLive && lyricsOn && prefs.getBoolean("np_lyrics_hidden", false)   // lyrics stay up when the buttons hide
-        if (vizLive && ov <= 0.01f) { c.restoreToCount(layer.takeIf { it >= 0 } ?: c.saveCount); toast(c, w, h, u); if (keepLyr) drawLyrics(c, w, h, u, pos); if (t.playing) viz.start() else viz.stop(); return }
+        if (vizLive && ov <= 0.01f) { c.restoreToCount(layer.takeIf { it >= 0 } ?: c.saveCount); toast(c, w, h, u); if (keepLyr) drawLyrics(c, w, h, u, pos, 1f); if (t.playing) viz.start() else viz.stop(); return }
         // The layout: the middle of the screen is left clear for the visualiser. The cover sits bottom left, the words bottom right,
         // a full-width progress bar runs along the bottom with the buttons centred under it, and the lyrics go top right.
         val now = SystemClock.uptimeMillis()
@@ -551,7 +551,7 @@ class NowPlaying(
         if (lyricsOn && !keepLyr) drawLyrics(c, w, h, u, pos)
         text.color = Color.WHITE
         if (layer >= 0) c.restoreToCount(layer)
-        if (keepLyr) drawLyrics(c, w, h, u, pos)
+        if (keepLyr) drawLyrics(c, w, h, u, pos, 1f - ov)
         if (vizLive) toast(c, w, h, u)
     }
 
@@ -598,10 +598,11 @@ class NowPlaying(
     }
 
     /** The lyrics, centred in the space above the cover: the line being sung large, a few before and after it fading away. Plain lyrics move along with the song. */
-    private fun drawLyrics(c: Canvas, w: Int, h: Int, u: Float, pos: Long) {
+    private fun drawLyrics(c: Canvas, w: Int, h: Int, u: Float, pos: Long, spread: Float = 0f) {
         val res = lyr
         val top = 40 * u
-        val bottom = h - 134 * u - 40 * u - 400 * u - 30 * u     // above the cover
+        val bottom0 = h - 134 * u - 40 * u - 400 * u - 30 * u     // above the cover
+        val bottom = bottom0 + (h - 40 * u - bottom0) * spread     // with the buttons hidden: the middle of the whole screen
         val maxW = w * 0.82f
         text.textAlign = Paint.Align.CENTER; text.letterSpacing = 0f
         if (res == null) {
