@@ -61,9 +61,17 @@ object VizSettings {
             return when {
                 running -> IdleSettings.Item(title, "OK stops the download", fmtTask(key) ?: "") { PresetStore.cancel(key) }
                 t != null && t.error.isNotEmpty() -> IdleSettings.Item(title, t.error, "Try again") { PresetStore.tasks.remove(key); if (!PresetStore.install(ctx, key, title, paths, bytes)) msg = "Not enough free space for ${mb(bytes)}" }
-                have == paths.size -> IdleSettings.Item(title, "All ${paths.size} installed (${mb(bytes)}). OK removes them", "Installed") { PresetStore.remove(ctx, paths) }
-                else -> IdleSettings.Item(title, "${paths.size - have} to download (${mb(bytes * (paths.size - have) / paths.size)})" + if (have > 0) ", $have already here" else "", "Download") {
-                    if (!PresetStore.install(ctx, key, title, paths, bytes * (paths.size - have) / paths.size)) msg = "Not enough free space for ${mb(bytes)}"
+                have == paths.size -> {
+                    val doRemove = { PresetStore.remove(ctx, paths); Unit }
+                    if (title.startsWith("Everything")) IdleSettings.Item(title, "All ${paths.size} installed (${mb(bytes)}). OK removes them, after asking", "Installed", menu = listOf("Cancel" to {}, "Yes, remove all ${paths.size}" to doRemove))
+                    else IdleSettings.Item(title, "All ${paths.size} installed (${mb(bytes)}). OK removes them", "Installed") { doRemove() }
+                }
+                else -> {
+                    val need = bytes * (paths.size - have) / paths.size
+                    val doGet = { if (!PresetStore.install(ctx, key, title, paths, need)) msg = "Not enough free space for ${mb(bytes)}"; Unit }
+                    val note = "${paths.size - have} to download (${mb(need)})" + if (have > 0) ", $have already here" else ""
+                    if (title.startsWith("Everything")) IdleSettings.Item(title, "$note. OK downloads them, after asking", "Download", menu = listOf("Cancel" to {}, "Yes, download ${paths.size - have} (${mb(need)})" to doGet))
+                    else IdleSettings.Item(title, note, "Download") { doGet() }
                 }
             }
         }
@@ -86,9 +94,9 @@ object VizSettings {
         // one row that turns a whole set of installed presets on or off
         fun allRow(title: String, paths: List<String>): IdleSettings.Item {
             val n = paths.count { it !in off }
-            return IdleSettings.Item(title, "OK turns them all on or off", if (n == paths.size) "" else "$n of ${paths.size} on", check = n == paths.size) {
-                PresetStore.setOff(p, paths, n == paths.size)
-            }
+            val allOn = n == paths.size
+            val ask = listOf("Cancel" to {}, (if (allOn) "Yes, turn all ${paths.size} off" else "Yes, turn all ${paths.size} on") to { PresetStore.setOff(p, paths, allOn); Unit })
+            return IdleSettings.Item(title, "OK turns them all on or off, after asking", if (allOn) "" else "$n of ${paths.size} on", check = allOn, menu = ask)
         }
         fun sizeOf(path: String): Int {
             val (cc, gg, ff) = path.split('/', limit = 3)
