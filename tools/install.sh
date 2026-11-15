@@ -41,6 +41,8 @@ echo "2/5  Granting Watch Next, secure settings, system settings and music acces
 "$PY" "$T" shell "appops set $APP WRITE_SETTINGS allow" > /dev/null 2>&1 || true
 # Now playing (media sessions) needs notification access; the service reads no notifications (see MediaListener.kt)
 "$PY" "$T" shell "cmd notification allow_listener $APP/$APP.MediaListener" > /dev/null 2>&1 || true
+# the music view equaliser reads the output mix (never the microphone); without it the bars use a gentle pattern
+"$PY" "$T" shell "pm grant $APP android.permission.RECORD_AUDIO" > /dev/null 2>&1 || true
 # the doorbell card (smart home) is shown over other apps: only when asked for with DOORBELL=1
 if [ "${DOORBELL:-0}" = 1 ]; then "$PY" "$T" shell "appops set $APP SYSTEM_ALERT_WINDOW allow" > /dev/null 2>&1 || true; fi
 

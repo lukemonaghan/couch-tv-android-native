@@ -46,6 +46,9 @@ class NowPlaying(
     var track: Track? = null; private set
     private var art: Bitmap? = null
     private var bg: Bitmap? = null
+    private val viz = AudioViz(ctx)
+    private var lyr: List<Lyrics.Line>? = null
+    val lyricsOn get() = prefs.getBoolean("np_lyrics", false)
     private var artKey = ""
     private var glow1 = Color.rgb(88, 66, 160); private var glow2 = Color.rgb(40, 90, 160)
     private var lastTrackKey = ""
@@ -77,7 +80,7 @@ class NowPlaying(
         main.post(poll)
     }
 
-    fun stop() { started = false; main.removeCallbacks(poll); track = null; ambientOpen = false; focused = false }
+    fun stop() { viz.stop(); started = false; main.removeCallbacks(poll); track = null; ambientOpen = false; focused = false }
 
     private fun refresh() {
         if (!on) { if (track != null) { track = null; ambientOpen = false; changed(false) }; return }
@@ -87,7 +90,7 @@ class NowPlaying(
         val md = pick?.metadata
         val title = md?.getString(MediaMetadata.METADATA_KEY_TITLE)
         if (pick == null || title.isNullOrBlank()) {
-            if (track != null) { track = null; ambientOpen = false; lastTrackKey = ""; art = null; bg = null; artKey = ""; changed(false) }
+            if (track != null) { track = null; ambientOpen = false; lastTrackKey = ""; art = null; bg = null; lyr = null; artKey = ""; changed(false) }
             return
         }
         val ps = pick.playbackState
@@ -106,7 +109,10 @@ class NowPlaying(
         val newTrack = key != lastTrackKey
         track = Track(pick.packageName, app, title, artist, album, playing, if (pos < 0) 0 else pos, dur, pick)
         readAt = SystemClock.uptimeMillis()
-        if (newTrack) { lastTrackKey = key; ambientDismissed = false }
+        if (newTrack) {
+            lastTrackKey = key; ambientDismissed = false; lyr = null
+            if (lyricsOn) Lyrics.fetch(artist, title, album, (dur / 1000).toInt()) { l -> main.post { if (lastTrackKey == key) { lyr = l; changed(false) } } }
+        }
         val auto = newTrack && ambientOn && !ambientDismissed
         if (auto) { ambientOpen = true; ambBtn = 1 }
         changed(auto)
@@ -177,9 +183,9 @@ class NowPlaying(
     }
 
     /** The full screen view cannot show now (Home settings is open): forget it without remembering a dismissal. */
-    fun abandonAmbient() { ambientOpen = false }
+    fun abandonAmbient() { ambientOpen = false; viz.stop() }
 
-    fun closeAmbient(dismiss: Boolean) { ambientOpen = false; if (dismiss) ambientDismissed = true; focus() }
+    fun closeAmbient(dismiss: Boolean) { ambientOpen = false; viz.stop(); if (dismiss) ambientDismissed = true; focus() }
 
     fun press() {
         val t = track ?: return
@@ -368,15 +374,20 @@ class NowPlaying(
         val sub = TextUtils.ellipsize(listOf(t.artist, t.album).filter { it.isNotEmpty() }.joinToString("  ·  "), text, metaW, TextUtils.TruncateAt.END)
         c.drawText(sub, 0, sub.length, mx, y + 30 * u, text)
         y += 48 * u + 32 * u
-        // the little equaliser, moving while the song plays
+        // the equaliser: the real spectrum of what is playing, across the whole width (a gentle pattern when the TV does not allow it)
         val now = SystemClock.uptimeMillis()
-        paint.color = Color.argb(115, 255, 255, 255)
-        for (i in 0 until 5) {
-            val hh = if (t.playing) (8 + 28 * (0.5 + 0.5 * sin(now / 260.0 + i * 1.3))).toFloat() * u else 6 * u
-            rect.set(mx + i * 14 * u, y + 36 * u - hh, mx + i * 14 * u + 8 * u, y + 36 * u)
-            c.drawRoundRect(rect, 4 * u, 4 * u, paint)
+        if (t.playing) viz.start() else viz.stop()
+        val n = AudioViz.BANDS; val eqH = 52 * u
+        val slot = metaW / n; val bw = slot * 0.62f
+        paint.color = Color.argb(150, 255, 255, 255)
+        for (i in 0 until n) {
+            val lv = if (viz.live) viz.bands[i] else if (t.playing) (0.18f + 0.5f * (0.5f + 0.5f * sin(now / 260.0 + i * 0.7)).toFloat() * (0.5f + 0.5f * sin(now / 900.0 + i * 0.3)).toFloat()) else 0.06f
+            val hh = (eqH * lv.coerceIn(0.05f, 1f))
+            val bx0 = mx + i * slot
+            rect.set(bx0, y + eqH - hh, bx0 + bw, y + eqH)
+            c.drawRoundRect(rect, bw / 2, bw / 2, paint)
         }
-        y += 36 * u + 24 * u
+        y += eqH + 24 * u
         // progress: elapsed, a bar, total (the position is the last read plus the time since)
         val pos = if (t.playing) t.position + (now - lastReadAt()) else t.position
         text.textSize = 18 * u; text.color = Color.argb(179, 255, 255, 255)
@@ -413,7 +424,27 @@ class NowPlaying(
         c.drawText(open, bx + 24 * u, y + 46 * u, text)
         text.color = Color.argb(140, 255, 255, 255); text.textSize = 18 * u
         c.drawText("▼ Press Down or Back for apps", mx, y + 120 * u, text)
+        if (lyricsOn) drawLyrics(c, w, h, u, pos)
         text.color = Color.WHITE
+    }
+
+    /** Three lines of the synced lyrics along the bottom: the one before, the one being sung, the next. */
+    private fun drawLyrics(c: Canvas, w: Int, h: Int, u: Float, pos: Long) {
+        val l = lyr ?: return
+        var i = l.indexOfLast { it.ms <= pos }
+        if (i < 0) i = -1
+        text.textAlign = Paint.Align.CENTER; text.letterSpacing = 0f
+        val maxW = w - 240 * u
+        fun row(idx: Int, y: Float, size: Float, alpha: Int, bold: Boolean) {
+            val t = l.getOrNull(idx)?.text?.takeIf { it.isNotBlank() } ?: return
+            text.typeface = if (bold) Fonts.semibold(ctx) else Fonts.regular(ctx); text.textSize = size * u; text.color = Color.argb(alpha, 255, 255, 255)
+            val e = TextUtils.ellipsize(t, text, maxW, TextUtils.TruncateAt.END)
+            c.drawText(e, 0, e.length, w / 2f, y, text)
+        }
+        row(i - 1, h - 190 * u, 28f, 100, false)
+        row(i, h - 130 * u, 44f, 255, true)
+        row(i + 1, h - 74 * u, 28f, 130, false)
+        text.textAlign = Paint.Align.LEFT
     }
 
     private fun glowAt(c: Canvas, x: Float, y: Float, r: Float, color: Int, alpha: Int) {
