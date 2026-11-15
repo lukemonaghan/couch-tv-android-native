@@ -16,11 +16,12 @@ import android.view.KeyEvent
 import java.lang.ref.WeakReference
 
 /** The home: one Activity holding one custom view (HomeView). */
-class MainActivity : Activity(), HomeActions, IdleHost {
+class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var resumed = false
     private lateinit var store: AppStore
     private lateinit var home: HomeView
+    private lateinit var video: VideoBackground
     private var packageWatcher: BroadcastReceiver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,7 +38,13 @@ class MainActivity : Activity(), HomeActions, IdleHost {
         main.postDelayed({ CrashGuard.settled(this) }, CrashGuard.SETTLE_MS)
         store = AppStore(this).also { it.reload() }
         home = HomeView(this, store, this)
-        setContentView(home)
+        // the optional video background sits behind the home (VideoBackground.kt): invisible until a clip really plays
+        video = VideoBackground(this, home.looks)
+        home.videoHook = { video.sync() }
+        val root = android.widget.FrameLayout(this)
+        root.addView(video, android.widget.FrameLayout.LayoutParams(-1, -1))
+        root.addView(home, android.widget.FrameLayout.LayoutParams(-1, -1))
+        setContentView(root)
         FireWatch.ensure(this)   // only once a computer has granted WRITE_SECURE_SETTINGS over ADB
         main.postDelayed({ FireWatch.rebindIfUnbound(applicationContext) }, 10_000L)   // listed but not bound after a force-stop
         watchPackages()
@@ -60,14 +67,32 @@ class MainActivity : Activity(), HomeActions, IdleHost {
         if (!QuickSystem.justPressed()) restoreTimeout()   // a screen-off time left short by the sleep timer or the screensaver button is put back (not in the first moments of a screensaver press)
         Plat.resumed()
         if (::home.isInitialized) home.refresh()   // an app may have been installed or removed while we were away
+        if (::video.isInitialized) video.resume()
     }
 
-    override fun onPause() { resumed = false; super.onPause() }
+    override fun onPause() { resumed = false; if (::video.isInitialized) video.pause(); super.onPause() }
+
+    // ---- Home settings, Look and scenes, Your photos: Android's file picker, where the TV has one
+    override fun pickPhotos(): Boolean {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*")
+            .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        if (i.resolveActivity(packageManager) == null) return false
+        return runCatching { startActivityForResult(i, PICK_PHOTOS); true }.getOrDefault(false)
+    }
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == HomeRole.REQUEST) Plat.homeAnswered()
+        if (requestCode != PICK_PHOTOS || resultCode != RESULT_OK || data == null) return
+        val uris = ArrayList<Uri>()
+        data.clipData?.let { for (k in 0 until it.itemCount) uris.add(it.getItemAt(k).uri) }
+        if (uris.isEmpty()) data.data?.let { uris.add(it) }
+        Thread {
+            val n = OwnPhotos.addUris(this, uris)
+            home.looks.photoMsg = if (n == 0) "No photo could be added." else if (n == 1) "Photo added. It shows as a scene." else "$n photos added. They show as scenes."
+            main.post { home.looks.notifyChanged() }
+        }.start()
     }
 
     override fun onDestroy() {
@@ -215,6 +240,7 @@ class MainActivity : Activity(), HomeActions, IdleHost {
     } catch (e: Exception) { Log.w("tvhome", "could not start $i: ${e.message}"); false }
 
     companion object {
+        private const val PICK_PHOTOS = 41
         @Volatile private var shown: WeakReference<MainActivity>? = null
 
         /** True while the home is resumed (in front). FireWatch checks this after a move to front on Android 10 (upstream #202). */

@@ -77,6 +77,12 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val settings by lazy { SettingsScreen(ctx, prefs, store, weather, act, peopleSettings) { onSettingsChanged() } }
     private val smart by lazy { SmartHomeScreen(ctx) { invalidate() } }
     private val icons = Icons(ctx) { invalidate() }
+    val looks = Looks.of(ctx, prefs)                       // the Look and scenes choices (Looks.kt); shared with the settings page
+    private val gstyle = GlassStyle(looks)
+    private val clear = ClearIcon(ctx) { invalidate() }
+    /** Set by the Activity: starts, stops or re-dims the video background when the looks, the minute or the hour change. */
+    var videoHook: (() -> Unit)? = null
+    init { looks.onChanged { sceneKey = ""; invalidate(); videoHook?.invoke() } }
     private val watch = WatchNext(ctx) { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); if (cards().isEmpty() && mode == Mode.CARDS) mode = Mode.DOCK; invalidate() }
 
     // ---- people: each has their own apps; a kids profile gets the kids shelf (KidsMode) instead of this home
@@ -154,7 +160,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     /** The scenes the household has on, in couch-tv's order (Home settings, Look and scenes). */
     private fun scenes(): List<SceneRenderer.Spec> {
         val on = prefs.getString("scenes", null)?.split(',')
-        return SceneRenderer.ALL.filter { on == null || it.id in on }.ifEmpty { listOf(SceneRenderer.NIGHT) }
+        return SceneRenderer.ALL.filter { on == null || it.id in on }.ifEmpty { listOf(SceneRenderer.NIGHT) } + looks.ownScenes()
     }
     private fun timeSync() = prefs.getBoolean("timeSync", true)
 
@@ -199,24 +205,28 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     /** Classic's photo now: sunrise in the morning, green by day, sunsets in the evening (couch-tv's own hours), or the rotation's turn. */
     private fun photo(): SceneRenderer.Photo {
-        val n = SceneRenderer.PHOTOS.size
-        if (!timeSync()) return SceneRenderer.PHOTOS[photoIdx % n]
-        val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        val i = when { h in 5..8 -> 0; h in 9..12 -> 1; h in 13..16 -> 2; h in 17..18 -> 3; else -> 4 }
-        return SceneRenderer.PHOTOS[i % n]
+        val list = looks.photos(); val n = list.size
+        val kept = if (looks.keepPhoto) list.firstOrNull { it.file == looks.keepPick } else null
+        val p = kept ?: if (!timeSync() || looks.keepPhoto) list[photoIdx % n] else {
+            val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            list[when { h in 5..8 -> 0; h in 9..12 -> 1; h in 13..16 -> 2; h in 17..18 -> 3; else -> 4 } % n]
+        }
+        looks.shownPhoto = p.file
+        return p
     }
 
     /** Every few seconds the next scene: it is drawn off the main thread, then fades in over 1.6 s. */
     private val rotate = object : Runnable {
         override fun run() {
             if (look == Look.NIGHT && !timeSync() && scenes().size > 1 && mode != Mode.SETTINGS) { sceneIdx = (sceneIdx + 1) % scenes().size; invalidate() }
-            if (look == Look.CLASSIC && !timeSync() && mode != Mode.SETTINGS) { photoIdx = (photoIdx + 1) % SceneRenderer.PHOTOS.size; invalidate() }
+            if (look == Look.CLASSIC && !timeSync() && !looks.keepPhoto && mode != Mode.SETTINGS) { photoIdx = (photoIdx + 1) % looks.photos().size; invalidate() }
             main.postDelayed(this, if (look == Look.CLASSIC) 90_000L else prefs.getInt("sceneSeconds", 20) * 1000L)
         }
     }
 
     private val minuteTick = object : Runnable {
         override fun run() {
+            looks.stepMinute(); videoHook?.invoke()   // the OLED shift moves a step, the video re-dims at 9 pm and 6 am
             invalidate()
             CustomCards.refresh(context); Updater.tick(context)   // each rate-limited (10 minutes, a week) and off until set up
             val now = System.currentTimeMillis()
@@ -256,7 +266,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     /** The TV is short of memory: drop the pictures, they are drawn again when needed. */
-    fun trim() { icons.clear(); watch.clear() }
+    fun trim() { icons.clear(); watch.clear(); clear.clear() }
 
     /** Back: one step out of whatever is open. False when the home is already at its top level. */
     fun back(): Boolean = if (quickBack()) true else when (mode) {
@@ -440,7 +450,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 when (t.kind) {
                     "person" -> ppl.list().getOrNull(ti)?.let { switchTo(it.id) }
                     "head" -> { peopleUi.open(); mode = Mode.POP }
-                    "sleep" -> { sleepIdx = (sleepIdx + 1) % sleepOptions.size; act.setSleepTimer(sleepOptions[sleepIdx]) }
+                    "sleep" -> { sleepIdx = (sleepIdx + 1) % sleepOptions.size; act.setSleepTimer(sleepOptions[sleepIdx]); looks.sleepSet(sleepOptions[sleepIdx]) }
                     "look" -> cycleLook()
                     "input" -> qAnchor["input"].let { a -> InputMenu.show(context, a?.get(0) ?: (width - 80 * height / 1080f), a?.get(1) ?: (148 * height / 1080f)) }
                     "soundscape" -> idle.cycleSound()
@@ -631,20 +641,26 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val dim = SceneRenderer.isDim(cal.get(Calendar.HOUR_OF_DAY))
         val sp = scene()
         val ph = photo()
-        val key = if (look == Look.NIGHT) "N|${sp.id}|$tx|$dt|$wx|$dim|${width}x$height" else "C|${ph.file}|$dim|${width}x$height"
+        val ls = looks.signature()
+        val key = if (look == Look.NIGHT) "N|${sp.id}|$tx|$dt|$wx|$dim|${width}x$height|$ls" else "C|${ph.file}|$dim|${width}x$height|$ls"
         if (key == sceneKey) return
         sceneBusy = true
         val w = width; val h = height; val lk = look
-        val needGlass = lk == Look.NIGHT && glassKey != "${sp.id}|$dim|${w}x$h"
+        val style = looks.clockStyle(); val video = looks.videoPlaying
+        // the blurred copy the glass is cut from: Night always (unless nothing is blurred), Classic only for glass panels or icons
+        val wantBase = looks.blurPx > 0f && (lk == Look.NIGHT || looks.glass == Looks.Glass.ON || looks.glassIcons)
+        val gk = if (wantBase) "${if (lk == Look.NIGHT) sp.id else ph.file}|$dim|${w}x$h|${looks.blurPx}|${looks.baseSaturation}|$lk" else ""
+        val needGlass = gk.isNotEmpty() && glassKey != gk
+        if (gk.isEmpty() && glassBmp != null) { glassBmp?.recycle(); glassBmp = null; glassKey = "" }   // nothing is blurred: give the 4 MB back
         worker.execute {
             val bmp = runCatching {
-                if (lk == Look.NIGHT) SceneRenderer.render(context, sp, tx, dt, wx, w, h, dim)
-                else SceneRenderer.classic(context, ph, w, h, dim)
+                if (lk == Look.NIGHT) SceneRenderer.render(context, sp, tx, dt, wx, w, h, dim, style)
+                else SceneRenderer.classic(context, ph, w, h, dim, video)
             }.getOrNull()
-            val glass = if (needGlass) runCatching { SceneRenderer.glassBase(context, sp, w, h, dim) }.getOrNull() else null
+            val glass = if (needGlass) runCatching { makeBase(lk, sp, ph, w, h, dim) }.getOrNull() else null
             main.post {
                 sceneBusy = false
-                if (glass != null) { val og = glassBmp; glassBmp = glass; glassKey = "${sp.id}|$dim|${w}x$h"; og?.recycle() }
+                if (glass != null) { val og = glassBmp; glassBmp = glass; glassKey = gk; og?.recycle() }
                 if (bmp != null && lk == look) {
                     val old = sceneBmp
                     val sid = if (lk == Look.NIGHT) sp.id else ph.file
@@ -657,10 +673,25 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         }
     }
 
+    /** The blurred background for glass panels: the scene's photo (or the Classic photo), at the blur and saturation the glass setting asks for. */
+    private fun makeBase(lk: Look, sp: SceneRenderer.Spec, ph: SceneRenderer.Photo, w: Int, h: Int, dim: Boolean): Bitmap? {
+        val src = if (lk == Look.NIGHT) (if (sp.photo.startsWith("file:")) sp.photo else "scenes/${sp.photo}.jpg")
+                  else (if (ph.path != null) "file:${ph.path}" else "backgrounds/${ph.file}.jpg")
+        return GlassBase.make(context, src, w, h, dim, if (lk == Look.NIGHT) sp.photoBrightness else 1f,
+            looks.blurPx, looks.baseSaturation, looks.baseBrightness, if (lk == Look.NIGHT) 1 else 2)
+    }
+
+    /** OLED burn-in shift (+-2 px a minute), the bedtime dimming over everything, and a steady frame rate while a tile sways. */
     override fun onDraw(c: Canvas) {
+        looks.motionDrawn = false
         if (idle.coversHome()) { idle.drawOver(c, width, height); return }   // the ambient clock or the dark screen: nothing underneath to draw
+        val shift = look == Look.OLED && mode != Mode.SETTINGS
+        if (shift) { val u = height / 1080f; c.save(); c.translate(looks.shiftX(u), looks.shiftY(u)) }
         drawHome(c)
+        if (shift) c.restore()
         idle.drawOver(c, width, height)
+        val fading = looks.drawBedtime(c, width, height, paint)
+        if (fading || looks.motionDrawn) postInvalidateDelayed(40)
     }
 
     private fun drawHome(c: Canvas) {
@@ -681,7 +712,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 c.drawBitmap(pv, 0f, 0f, null)
                 paint.alpha = (f * 255).toInt(); c.drawBitmap(b, 0f, 0f, paint); paint.alpha = 255
                 if (f >= 1f) { pv.recycle(); prevBmp = null } else postInvalidateOnAnimation()
-            } else if (b != null) c.drawBitmap(b, 0f, 0f, null) else c.drawColor(ground)
+            } else if (b != null) c.drawBitmap(b, 0f, 0f, null) else if (!looks.videoPlaying) c.drawColor(ground)
             if (look == Look.NIGHT) {   // the scrim couch-tv puts under the dock: clear at 60% of the height, half black at the bottom
                 paint.style = Paint.Style.FILL
                 paint.shader = LinearGradient(0f, height * 0.6f, 0f, height.toFloat(), 0x00000000, 0x80000000.toInt(), Shader.TileMode.CLAMP)
@@ -716,6 +747,11 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         clockPaint.typeface = Fonts.light(context); clockPaint.color = Color.WHITE
         clockPaint.textAlign = Paint.Align.RIGHT; clockPaint.textSize = 112 * u; clockPaint.letterSpacing = -0.035f
         clockPaint.setShadowLayer(24 * u, 0f, 2 * u, Color.argb(89, 0, 0, 0))
+        if (looks.glass != Looks.Glass.OFF) {   // Glass panels: a glass card behind the clock and the date
+            text.typeface = Fonts.semibold(context); text.textSize = 30 * u
+            val cw = maxOf(clockPaint.measureText(clockText(cal)) + (if (h24) 0f else 90 * u), text.measureText(dateText(cal)))
+            gstyle.panel(c, right - cw - 40 * u, 46 * u, right + 28 * u, 268 * u, 36 * u, glassBmp, u)
+        }
         var x = right
         if (!h24) {
             text.typeface = Fonts.regular(context); text.textSize = 36 * u; text.textAlign = Paint.Align.RIGHT
@@ -754,8 +790,6 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             nightIcon(c, u, pl + padX + i * (tw + gap), pt + padY, tw, i, i == focus, mode == Mode.MOVING)
         }
     }
-
-    private val glassPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     /** Night's top row: the people switch at 80, 60 and the round quick buttons at the right edge. */
     private fun drawTop(c: Canvas, u: Float) {
@@ -951,35 +985,21 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         c.restore()
     }
 
-    /** couch-tv's glass: the blurred photo behind it, a plum tint, a pink hairline and a lighter line along the top edge. */
+    /** couch-tv's glass panel (GlassStyle.kt): the home's own plum panel, or the clear one, as Look and scenes chose. */
     private fun glass(c: Canvas, l: Float, t: Float, r: Float, b: Float, radius: Float) {
-        rect.set(l, t, r, b)
-        clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
-        c.save(); c.clipPath(clip)
-        glassBmp?.let { c.drawBitmap(it, 0f, 0f, null) }
-        glassPaint.style = Paint.Style.FILL; glassPaint.color = Color.argb(82, 30, 20, 28)
-        c.drawRect(rect, glassPaint)
-        c.restore()
-        val px = height / 1080f
-        glassPaint.style = Paint.Style.STROKE; glassPaint.strokeWidth = px
-        glassPaint.color = Color.argb(41, 255, 210, 220)
-        rect.inset(px / 2, px / 2)
-        c.drawRoundRect(rect, radius, radius, glassPaint)
-        glassPaint.color = Color.argb(36, 255, 220, 230)
-        c.save(); c.clipRect(l, t, r, t + radius)
-        rect.set(l + px / 2, t + px * 1.5f, r - px / 2, b)
-        c.drawRoundRect(rect, radius, radius, glassPaint)
-        c.restore()
+        gstyle.panel(c, l, t, r, b, radius, glassBmp, height / 1080f)
     }
 
     private fun nightIcon(c: Canvas, u: Float, x: Float, y: Float, size: Float, index: Int, focused: Boolean, moving: Boolean) {
         val app = if (index < store.line) store.items[index] else null
         val radius = size * 0.265f
+        // glass app icons: the app's glyph on a glass tile; the focused app shows its own colours unless "Stays glass"
+        val glassy = looks.glassIcons && app != null && (!focused || looks.glassFocusStay)
         c.save()
         val cx = x + size / 2; val cy = y + size / 2
-        if (focused) { c.translate(cx, cy - 10 * u * (size / (112 * u))); c.scale(1.16f, 1.16f); c.translate(-cx, -cy) }
+        if (focused) { c.translate(cx, cy - 10 * u * (size / (112 * u))); c.scale(1.16f, 1.16f); c.translate(-cx, -cy); looks.sway(c, cx, cy) }
         rect.set(x, y, x + size, y + size)
-        if (focused) {   // the white ring and its shadow
+        if (focused && !glassy) {   // the white ring and its shadow
             softShadow(c, rect, radius, 18 * u, 22 * u, if (app != null) 110 else 40)
             // a ring, not a white disc, so the Settings and More apps glass tiles stay see-through inside it
             rect.set(x - 2 * u, y - 2 * u, x + size + 2 * u, y + size + 2 * u)
@@ -991,10 +1011,12 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         paint.style = Paint.Style.FILL
         paint.color = if (app != null) Color.rgb(42, 42, 48) else Color.argb(36, 255, 255, 255)
         paint.alpha = if (moving && !focused) 178 else if (app != null) 255 else 36
-        c.drawRoundRect(rect, radius, radius, paint)
+        if (glassy) gstyle.iconTile(c, x, y, x + size, y + size, radius, glassBmp, height / 1080f, focused)
+        else c.drawRoundRect(rect, radius, radius, paint)
         if (app != null) {
-            val bmp = icons.square(app, size.toInt().coerceAtLeast(1))
-            if (bmp != null) {
+            val bmp = if (glassy) null else icons.square(app, size.toInt().coerceAtLeast(1))
+            if (glassy) glassGlyph(c, u, app, x, y, size, size, focused, false, radius)
+            else if (bmp != null) {
                 // the app's icon sits inside the tile with room around it, like the logos in couch-tv's dock
                 val inset = size * 0.15f
                 rect.set(x + inset, y + inset, x + size - inset, y + size - inset)
@@ -1023,7 +1045,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             rect.set(x, y, x + size, y + size)
             clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
             c.save(); c.clipPath(clip)
-            paint.shader = LinearGradient(x + size * 0.1f, y, x + size * 0.9f, y + size, intArrayOf(0, Color.argb(46, 255, 255, 255), 0), floatArrayOf(0.3f, 0.55f, 0.8f), Shader.TileMode.CLAMP)
+            paint.shader = LinearGradient(x + (looks.glintCentre() - 0.4f) * size, y, x + (looks.glintCentre() + 0.4f) * size, y + size, intArrayOf(0, Color.argb(46, 255, 255, 255), 0), floatArrayOf(0.3f, 0.55f, 0.8f), Shader.TileMode.CLAMP)
             paint.style = Paint.Style.FILL; paint.alpha = 255
             c.drawRect(rect, paint); paint.shader = null
             c.restore()
@@ -1037,6 +1059,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     /** A soft shadow under [r] (already at its place): stacked rounded rects, each a little bigger and fainter, so there is no hard edge and no blur filter to run on a weak TV. */
     private fun softShadow(c: Canvas, r: RectF, radius: Float, dy: Float, spread: Float, alpha: Int) {
+        if (looks.lighter) return   // the lighter home casts no soft shadows
         val n = 7
         paint.style = Paint.Style.FILL
         val save = RectF(r)
@@ -1062,6 +1085,39 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         clip.moveTo(px(10f), py(20f)); clip.lineTo(px(10f), py(14.8f)); clip.lineTo(px(14f), py(14.8f)); clip.lineTo(px(14f), py(20f))
         c.drawPath(clip, paint)
         paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT; paint.strokeJoin = Paint.Join.MITER
+    }
+
+    private val greyFilter = ColorMatrixColorFilter(ColorMatrix().apply {
+        setSaturation(0f)
+        postConcat(ColorMatrix(floatArrayOf(1.4f, 0f, 0f, 0f, -26f, 0f, 1.4f, 0f, 0f, -26f, 0f, 0f, 1.4f, 0f, -26f, 0f, 0f, 0f, 1f, 0f)))   // contrast 1.25, brightness 1.1 about the middle
+    })
+
+    /** The app's glyph, white, on its glass tile (ClearIcon.kt). An icon that will not split is shown grey and half see-through. [banner]: Classic's landscape tile. */
+    private fun glassGlyph(c: Canvas, u: Float, app: AppItem, x: Float, y: Float, w: Float, h: Float, focused: Boolean, banner: Boolean, radius: Float) {
+        val m = clear.mask(app, banner)
+        paint.style = Paint.Style.FILL; paint.shader = null
+        if (m != null) {
+            if (banner) rect.set(x, y + h / 2 - w / 2, x + w, y + h / 2 + w / 2) else rect.set(x, y, x + w, y + h)
+            clip.reset(); clip.addRoundRect(x, y, x + w, y + h, radius, radius, Path.Direction.CW)
+            c.save(); c.clipPath(clip)
+            paint.color = Color.argb(71, 0, 0, 0); rect.offset(0f, u); c.drawBitmap(m, null, rect, paint); rect.offset(0f, -u)   // a hair of shadow lifts the white glyph
+            paint.color = Color.WHITE; paint.alpha = ((if (focused) 1f else looks.glyphAlpha) * 255).toInt()
+            c.drawBitmap(m, null, rect, paint)
+            c.restore(); paint.alpha = 255
+        } else if (clear.refused(app, banner)) {
+            val b = if (banner) icons.get(app, w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1)) else icons.square(app, w.toInt().coerceAtLeast(1))
+            if (b != null) {
+                val inset = if (banner) 0f else w * 0.15f
+                rect.set(x + inset, y + (if (banner) 0f else inset), x + w - inset, y + h - (if (banner) 0f else inset))
+                clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
+                c.save(); c.clipPath(clip)
+                paint.colorFilter = greyFilter; paint.alpha = if (focused) 255 else 140
+                c.drawBitmap(b, null, rect, paint)
+                paint.colorFilter = null; paint.alpha = 255
+                c.restore()
+            }
+        }
+        rect.set(x, y, x + w, y + h)
     }
 
     private val dimFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
@@ -1148,8 +1204,9 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private fun classicApp(c: Canvas, u: Float, index: Int, x: Float, y: Float, w: Float, h: Float, focused: Boolean, dim: Boolean) {
         val app = if (index < store.line) store.items[index] else null
         val r = 10 * u
+        val glassy = looks.glassIcons && app != null && (!focused || looks.glassFocusStay)
         c.save()
-        if (focused) { c.translate(x + w / 2, y + h / 2); c.scale(1.16f, 1.16f); c.translate(-(x + w / 2), -(y + h / 2)) }
+        if (focused) { c.translate(x + w / 2, y + h / 2); c.scale(1.16f, 1.16f); c.translate(-(x + w / 2), -(y + h / 2)); looks.sway(c, x + w / 2, y + h / 2) }
         rect.set(x, y, x + w, y + h)
         paint.style = Paint.Style.FILL
         softShadow(c, rect, r, if (focused) 28 * u else 8 * u, if (focused) 40 * u else 14 * u, if (focused) 190 else 100)
@@ -1157,10 +1214,19 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         c.save(); c.clipPath(clip)
         paint.alpha = if (dim) 120 else 255
         if (app != null) {
+            if (glassy) {
+                gstyle.iconTile(c, x, y, x + w, y + h, r, glassBmp, height / 1080f, focused)
+                glassGlyph(c, u, app, x, y, w, h, focused, true, r)
+            } else {
             paint.color = Color.rgb(28, 28, 33); c.drawRect(rect, paint)
             icons.get(app, w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1))?.let { b -> paint.alpha = if (dim) 120 else 255; c.drawBitmap(b, null, rect, paint) }
                 ?: run { text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.textAlign = Paint.Align.CENTER
                          val l = TextUtils.ellipsize(app.label, text, w - 20 * u, TextUtils.TruncateAt.END); c.drawText(l, 0, l.length, x + w / 2, y + h / 2 + 8 * u, text) }
+            }
+        } else if (looks.glass != Looks.Glass.OFF) {   // Glass panels on: Settings and More apps turn to glass too
+            gstyle.panel(c, x, y, x + w, y + h, r, glassBmp, height / 1080f)
+            if (index == store.line) { text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.textAlign = Paint.Align.CENTER; c.drawText("Settings", x + w / 2, y + h / 2 + 8 * u, text) }
+            else glyph(c, u, x + w / 2, y + h / 2, 112 * u * 0.7f, false)
         } else {   // the house's own tiles: a dark gradient, the name or three dots
             paint.shader = LinearGradient(x, y, x + w * 0.4f, y + h, Color.rgb(44, 44, 51), Color.rgb(26, 26, 31), Shader.TileMode.CLAMP)
             c.drawRect(rect, paint); paint.shader = null
@@ -1169,9 +1235,15 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         }
         if (focused) { paint.alpha = 255; paint.style = Paint.Style.FILL; paint.color = Color.argb(46, 255, 255, 255)
             val sx = x - w * 0.6f
-            paint.shader = LinearGradient(x + w * 0.2f, y, x + w * 0.8f, y + h, intArrayOf(0, Color.argb(51, 255, 255, 255), 0), floatArrayOf(0.35f, 0.5f, 0.65f), Shader.TileMode.CLAMP)
+            val gc = looks.glintCentre()
+            paint.shader = LinearGradient(x + (gc - 0.3f) * w, y, x + (gc + 0.3f) * w, y + h, intArrayOf(0, Color.argb(51, 255, 255, 255), 0), floatArrayOf(0.35f, 0.5f, 0.65f), Shader.TileMode.CLAMP)
             c.drawRect(rect, paint); paint.shader = null }
         c.restore()
+        if (looks.glass != Looks.Glass.OFF && !focused) {   // Glass panels: every resting tile gets a light edge
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = u; paint.color = Color.argb(61, 255, 255, 255)
+            rect.set(x - u / 2, y - u / 2, x + w + u / 2, y + h + u / 2); c.drawRoundRect(rect, r, r, paint)
+            paint.style = Paint.Style.FILL; rect.set(x, y, x + w, y + h)
+        }
         if (app != null && store.isNew(app.pkg) || (app == null && index == gearIdx() && Updater.ready)) { paint.alpha = 255; paint.color = Color.parseColor("#3D8BFF"); c.drawCircle(x + w - 12 * u, y + 12 * u, 6 * u, paint) }
         if (focused) {
             text.typeface = Fonts.semibold(context); text.textSize = 20 * u; text.textAlign = Paint.Align.CENTER

@@ -72,7 +72,8 @@
         android:icon="@drawable/icon"
         android:banner="@drawable/banner"
         android:theme="@style/Home"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"
