@@ -41,7 +41,7 @@ interface HomeActions {
  * The remote's D-pad drives everything through the key callbacks below.
  */
 class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
-    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS, TOP }
+    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS, TOP, SMART }
     /** Night: the scene with the big glass clock and the dock. OLED: a grid on pure black. Classic: a grid over the photo. */
     private enum class Look { NIGHT, OLED, CLASSIC }
 
@@ -75,12 +75,18 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private val weather = Weather(ctx) { sceneKey = ""; invalidate() }
     private val settings by lazy { SettingsScreen(ctx, prefs, store, weather, act) { onSettingsChanged() } }
+    private val smart by lazy { SmartHomeScreen(ctx) { invalidate() } }
     private val icons = Icons(ctx) { invalidate() }
     private val watch = WatchNext(ctx) { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); if (cards().isEmpty() && mode == Mode.CARDS) mode = Mode.DOCK; invalidate() }
 
     /** Keep watching: the Watch Next list. With the "demoCards" pref set (screenshots) two made-up shows stand in. */
     private fun cards(): List<Card> =
-        if (watch.cards.isEmpty() && prefs.getBoolean("demoCards", false)) DEMO else watch.cards
+        (if (watch.cards.isEmpty() && prefs.getBoolean("demoCards", false)) DEMO else watch.cards) + CustomCards.cards
+
+    // The dock after the apps: the Smart home tile (only when Home Assistant is set up), Settings, More apps.
+    private fun smartIdx() = if (Plat.smartAvailable()) store.line else -1
+    private fun gearIdx() = store.line + (if (smartIdx() >= 0) 1 else 0)
+    private fun dockSlots() = gearIdx() + 2
     private val main = Handler(Looper.getMainLooper())
 
     private val ground = Color.parseColor("#0D1E19")
@@ -176,6 +182,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val minuteTick = object : Runnable {
         override fun run() {
             invalidate()
+            CustomCards.refresh(context); Updater.tick(context)   // each rate-limited (10 minutes, a week) and off until set up
             val now = System.currentTimeMillis()
             main.postDelayed(this, 60_000L - now % 60_000L + 50L)   // once a minute, on the minute
         }
@@ -184,6 +191,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     init {
         isFocusable = true
         isFocusableInTouchMode = true
+        CustomCards.listener = { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); invalidate() }   // cleared in MainActivity.onDestroy
+        Updater.listener = { invalidate() }
     }
 
     override fun onAttachedToWindow() { super.onAttachedToWindow(); requestFocus(); minuteTick.run(); main.postDelayed(rotate, prefs.getInt("sceneSeconds", 20) * 1000L) }
@@ -192,13 +201,13 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ------------------------------------------------------------------ what the Activity calls
 
     /** Home pressed while the home is already showing: back to the first tile. */
-    fun goHome() { mode = Mode.DOCK; fi = 0; invalidate() }
+    fun goHome() { if (mode == Mode.SMART) smart.close(); mode = Mode.DOCK; fi = 0; invalidate() }
 
     /** The app list changed (a package came or went, or the home came back to the front). */
     fun refresh() {
         store.reload()
         watch.reload()
-        fi = fi.coerceIn(0, store.line + 1)
+        fi = fi.coerceIn(0, dockSlots() - 1)
         mi = mi.coerceIn(0, maxOf(0, store.items.size - 1))
         if (mode == Mode.MOVING && movingIndex >= store.line) mode = Mode.DOCK
         invalidate()
@@ -211,9 +220,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     fun back(): Boolean = when (mode) {
         Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate(); true }
         Mode.MENU -> { mode = menuFrom; invalidate(); true }
-        Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, store.line + 1); invalidate(); true }
+        Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, dockSlots() - 1); invalidate(); true }
         Mode.CARDS, Mode.TOP -> { mode = Mode.DOCK; invalidate(); true }
-        Mode.SETTINGS -> { if (!settings.back()) { mode = Mode.DOCK; fi = store.line }; invalidate(); true }
+        Mode.SETTINGS -> { if (!settings.back()) { mode = Mode.DOCK; fi = gearIdx() }; invalidate(); true }
+        Mode.SMART -> { smart.close(); mode = Mode.DOCK; fi = smartIdx().coerceAtLeast(0); invalidate(); true }
         Mode.DOCK -> false
     }
 
@@ -254,7 +264,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private fun onSettingsChanged() {
         look = runCatching { Look.valueOf(prefs.getString("look", null) ?: "NIGHT") }.getOrDefault(Look.NIGHT)
         sceneKey = ""
-        fi = fi.coerceIn(0, store.line + 1)
+        fi = fi.coerceIn(0, dockSlots() - 1)
         invalidate()
     }
 
@@ -264,7 +274,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         look = Look.values()[(look.ordinal + 1) % Look.values().size]
         prefs.edit().putString("look", look.name).apply()
         sceneBmp = null; sceneKey = ""
-        fi = fi.coerceIn(0, store.line + 1)
+        fi = fi.coerceIn(0, dockSlots() - 1)
         invalidate()
     }
 
@@ -272,9 +282,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun dir(code: Int) {
         if (mode == Mode.SETTINGS) { settings.key(code); return }
-        val dockCount = store.line + 2
+        if (mode == Mode.SMART) { smart.key(code); return }
+        val dockCount = dockSlots()
         when (mode) {
-            Mode.SETTINGS -> {}
+            Mode.SETTINGS, Mode.SMART -> {}
             Mode.TOP -> {
                 val n = topItems().size
                 when (code) {
@@ -329,7 +340,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
                     store.sendToMore(movingIndex)   // behind More apps
                     mode = Mode.DOCK
-                    fi = minOf(movingIndex, store.line + 1)
+                    fi = minOf(movingIndex, dockSlots() - 1)
                 }
             }
         }
@@ -347,10 +358,12 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         when (mode) {
             Mode.DOCK -> when {
                 fi < store.line -> launch(store.items[fi])
-                fi == store.line -> { settings.open(); mode = Mode.SETTINGS; invalidate() }
+                fi == smartIdx() -> { smart.open(); mode = Mode.SMART; invalidate() }
+                fi == gearIdx() -> { settings.open(); mode = Mode.SETTINGS; invalidate() }
                 else -> { openMore(0); invalidate() }
             }
             Mode.SETTINGS -> settings.key(KeyEvent.KEYCODE_DPAD_CENTER)
+            Mode.SMART -> smart.key(KeyEvent.KEYCODE_DPAD_CENTER)
             Mode.TOP -> topItems().getOrNull(ti)?.let { t ->
                 when (t.kind) {
                     "person" -> prefs.edit().putInt("person", people().indexOf(t.label).coerceAtLeast(0)).apply()
@@ -359,7 +372,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 }
                 invalidate()
             }
-            Mode.CARDS -> cards().getOrNull(ci)?.let { act.openCard(it.pkg, it.intentUri) }
+            Mode.CARDS -> cards().getOrNull(ci)?.let { if (CustomCards.isCustom(it)) Plat.openCustom(it) else act.openCard(it.pkg, it.intentUri) }
             Mode.MORE -> store.items.getOrNull(mi)?.let { launch(it) }
             Mode.MENU -> chooseMenu()
             Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate() }
@@ -448,6 +461,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     override fun onDraw(c: Canvas) {
         val u = height / 1080f
         if (mode == Mode.SETTINGS) { settings.draw(c, width, height); return }
+        if (mode == Mode.SMART) { smart.draw(c, width, height); return }
         if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || look == Look.OLED) {
             c.drawColor(if (look == Look.OLED && mode != Mode.MORE) Color.BLACK else ground)
         } else {
@@ -507,7 +521,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private fun drawDock(c: Canvas, u: Float) {
         if (look != Look.NIGHT) { drawHomeGrid(c, u); return }
         // couch-tv's Night dock: a glass pill, 7 rem icons 1.625 rem apart, 2.875 rem off the bottom
-        val n = store.line + 2
+        val n = dockSlots()
         val fit = minOf(1f, (width - 80 * u) / (n * 138 * u + 30 * u))
         val tw = 112 * u * fit; val gap = 26 * u * fit
         val padX = 28 * u * fit; val padY = 22 * u * fit
@@ -775,7 +789,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 c.drawCircle(x + size - 10 * u, y + 10 * u, 6 * u, paint)
             }
         } else {
-            glyph(c, u, cx, cy, size, index == store.line)
+            if (index == smartIdx()) smartGlyph(c, u, cx, cy, size) else glyph(c, u, cx, cy, size, index == gearIdx())
+            if (index == gearIdx() && Updater.ready) { paint.style = Paint.Style.FILL; paint.color = Color.parseColor("#3D8BFF"); paint.alpha = 255; c.drawCircle(x + size - 10 * u, y + 10 * u, 6 * u, paint) }
         }
         if (focused) {   // couch-tv's light sliding across a focused tile, held part way
             rect.set(x, y, x + size, y + size)
@@ -805,6 +820,21 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             c.drawRoundRect(r, radius + g, radius + g, paint)
         }
         r.set(save)
+    }
+
+    /** The Smart home tile's house, stroked like the gear (couch-tv's icon: roof, walls, door). */
+    private fun smartGlyph(c: Canvas, u: Float, cx: Float, cy: Float, size: Float) {
+        val k = 58f * u / 24f * (size / (112 * u))
+        paint.style = Paint.Style.STROKE; paint.color = Color.WHITE; paint.alpha = 255
+        paint.strokeWidth = 1.7f * k; paint.strokeCap = Paint.Cap.ROUND; paint.strokeJoin = Paint.Join.ROUND
+        fun px(v: Float) = cx + (v - 12f) * k
+        fun py(v: Float) = cy + (v - 12f) * k
+        clip.reset()
+        clip.moveTo(px(3.5f), py(11.2f)); clip.lineTo(px(12f), py(4f)); clip.lineTo(px(20.5f), py(11.2f))
+        clip.moveTo(px(5.8f), py(9.5f)); clip.lineTo(px(5.8f), py(20f)); clip.lineTo(px(18.2f), py(20f)); clip.lineTo(px(18.2f), py(9.5f))
+        clip.moveTo(px(10f), py(20f)); clip.lineTo(px(10f), py(14.8f)); clip.lineTo(px(14f), py(14.8f)); clip.lineTo(px(14f), py(20f))
+        c.drawPath(clip, paint)
+        paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT; paint.strokeJoin = Paint.Join.MITER
     }
 
     private val dimFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
@@ -847,7 +877,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             }
         }
         // the apps: 184 x 104 banners, 40 apart across, 56 between rows, from 600
-        val n = store.line + 2
+        val n = dockSlots()
         val tw = 184 * u; val th = 104 * u; val px = 224 * u; val py = 160 * u
         val focus = if (mode == Mode.MOVING) movingIndex else if (mode == Mode.DOCK || mode == Mode.MENU) fi else -1
         val rows = 3
@@ -907,7 +937,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         } else {   // the house's own tiles: a dark gradient, the name or three dots
             paint.shader = LinearGradient(x, y, x + w * 0.4f, y + h, Color.rgb(44, 44, 51), Color.rgb(26, 26, 31), Shader.TileMode.CLAMP)
             c.drawRect(rect, paint); paint.shader = null
-            if (index == store.line) { text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.textAlign = Paint.Align.CENTER; c.drawText("Settings", x + w / 2, y + h / 2 + 8 * u, text) }
+            if (index == smartIdx() || index == gearIdx()) { text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.textAlign = Paint.Align.CENTER; c.drawText(if (index == smartIdx()) PS.SMART_HOME else "Settings", x + w / 2, y + h / 2 + 8 * u, text) }
             else glyph(c, u, x + w / 2, y + h / 2, 112 * u * 0.7f, false)
         }
         if (focused) { paint.alpha = 255; paint.style = Paint.Style.FILL; paint.color = Color.argb(46, 255, 255, 255)
@@ -915,7 +945,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             paint.shader = LinearGradient(x + w * 0.2f, y, x + w * 0.8f, y + h, intArrayOf(0, Color.argb(51, 255, 255, 255), 0), floatArrayOf(0.35f, 0.5f, 0.65f), Shader.TileMode.CLAMP)
             c.drawRect(rect, paint); paint.shader = null }
         c.restore()
-        if (app != null && store.isNew(app.pkg)) { paint.alpha = 255; paint.color = Color.parseColor("#3D8BFF"); c.drawCircle(x + w - 12 * u, y + 12 * u, 6 * u, paint) }
+        if (app != null && store.isNew(app.pkg) || (app == null && index == gearIdx() && Updater.ready)) { paint.alpha = 255; paint.color = Color.parseColor("#3D8BFF"); c.drawCircle(x + w - 12 * u, y + 12 * u, 6 * u, paint) }
         if (focused) {
             text.typeface = Fonts.semibold(context); text.textSize = 20 * u; text.textAlign = Paint.Align.CENTER
             c.drawText(dockTitle(index), x + w / 2, y + h + 10 * u + 17 * u, text)
@@ -926,7 +956,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun dockTitle(i: Int): String = when {
         i < store.line -> store.items[i].label
-        i == store.line -> "Settings"
+        i == smartIdx() -> PS.SMART_HOME
+        i == gearIdx() -> "Settings"
         else -> "More apps"
     }
 

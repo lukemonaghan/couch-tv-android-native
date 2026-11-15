@@ -39,6 +39,8 @@ echo "2/5  Granting Watch Next, secure settings and system settings"
 "$PY" "$T" shell "pm grant $APP android.permission.READ_TV_LISTINGS" > /dev/null 2>&1 || true
 "$PY" "$T" shell "pm grant $APP android.permission.WRITE_SECURE_SETTINGS" > /dev/null 2>&1 || true
 "$PY" "$T" shell "appops set $APP WRITE_SETTINGS allow" > /dev/null 2>&1 || true
+# the doorbell card (smart home) is shown over other apps: only when asked for with DOORBELL=1
+if [ "${DOORBELL:-0}" = 1 ]; then "$PY" "$T" shell "appops set $APP SYSTEM_ALERT_WINDOW allow" > /dev/null 2>&1 || true; fi
 
 echo "3/5  Writing down the current home"
 NOW=$("$PY" "$T" shell "cmd shortcut get-default-launcher" | tr -d '\r' | grep -m1 Launcher || true)

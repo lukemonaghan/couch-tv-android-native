@@ -25,7 +25,7 @@ class SettingsScreen(
     private class Row(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
                        val header: Boolean = false, val press: (() -> Unit)? = null)
 
-    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "About")
+    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "Smart home", "Updates", "About")
     private var page = 0
     private var inRows = false
     private var row = 0
@@ -115,11 +115,15 @@ class SettingsScreen(
                 Row("Look switch", "Flips between Night, OLED and Classic", check = "look" in q) { toggle("look") },
             )
         }
-        else -> listOf(
+        "Smart home" -> PlatformPages.smart(ctx).map(::pr)
+        "Updates" -> PlatformPages.updates(ctx).map(::pr)
+        else -> PlatformPages.aboutTop(ctx).map(::pr) + listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
             Row("Android settings", "Wi-Fi, display, accounts and the rest") { act.openSettings() },
-        )
+        ) + PlatformPages.aboutBottom(prefs, store) { changed() }.map(::pr)
     }
+
+    private fun pr(p: PlatformPages.PRow) = Row(p.title, p.note, p.value, p.check, p.header, p.press)
 
     // ------------------------------------------------------------------ keys
 
@@ -236,6 +240,19 @@ class SettingsScreen(
     private fun icon(c: Canvas, i: Int, cx: Float, cy: Float, u: Float, color: Int) {
         paint.style = Paint.Style.STROKE; paint.strokeWidth = 2.6f * u; paint.color = color; paint.strokeCap = Paint.Cap.ROUND
         val k = u
+        when (pages[i]) {   // the platform pages are found by name, so adding a page never shifts the others
+            "Smart home" -> {   // a house
+                c.drawLine(cx - 12 * k, cy - 1 * k, cx, cy - 11 * k, paint); c.drawLine(cx, cy - 11 * k, cx + 12 * k, cy - 1 * k, paint)
+                c.drawLine(cx - 8 * k, cy - 4 * k, cx - 8 * k, cy + 11 * k, paint); c.drawLine(cx + 8 * k, cy - 4 * k, cx + 8 * k, cy + 11 * k, paint)
+                c.drawLine(cx - 8 * k, cy + 11 * k, cx + 8 * k, cy + 11 * k, paint)
+                paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT; return
+            }
+            "Updates" -> {   // an arrow up out of a tray
+                c.drawLine(cx, cy + 5 * k, cx, cy - 11 * k, paint); c.drawLine(cx - 6 * k, cy - 5 * k, cx, cy - 11 * k, paint); c.drawLine(cx + 6 * k, cy - 5 * k, cx, cy - 11 * k, paint)
+                c.drawLine(cx - 10 * k, cy + 11 * k, cx + 10 * k, cy + 11 * k, paint)
+                paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT; return
+            }
+        }
         when (i) {
             0 -> { c.drawCircle(cx, cy - 3 * k, 8 * k, paint); c.drawLine(cx, cy + 5 * k, cx, cy + 13 * k, paint) }                // pin
             1 -> { c.drawCircle(cx - 3 * k, cy + 2 * k, 7 * k, paint); c.drawCircle(cx + 6 * k, cy + 4 * k, 5 * k, paint) }        // cloud
