@@ -75,7 +75,9 @@ class AmbientFx(private val prefs: SharedPreferences, private val weather: Weath
     val sunOn get() = prefs.getBoolean("wx_sun", true) && !lighter()
 
     private fun typeNow(): String {
-        if (!particlesOn || weather.tempC == null) return "clear"
+        if (!particlesOn) return "clear"
+        prefs.getString("wx_demo", null)?.let { return it } // test hook: rain, snow, fog, storm
+        if (weather.tempC == null) return "clear"
         val c = weather.code
         return when { c in STORM -> "storm"; c in RAIN -> "rain"; c in SNOW -> "snow"; c in FOG -> "fog"; else -> "clear" }
     }
