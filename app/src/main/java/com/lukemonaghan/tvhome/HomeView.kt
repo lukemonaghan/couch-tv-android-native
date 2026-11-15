@@ -371,13 +371,12 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 when (code) {
                     KeyEvent.KEYCODE_DPAD_LEFT -> if (ti > 0) ti--
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (ti < n - 1) ti++
-                    KeyEvent.KEYCODE_DPAD_DOWN -> if (np.reach() && (look != Look.NIGHT || cards().isEmpty())) { mode = Mode.NP; np.focus() } else mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK
+                    KeyEvent.KEYCODE_DPAD_DOWN -> if (np.reach()) { mode = Mode.NP; np.focus() } else mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK
                 }
             }
             Mode.NP -> if (!np.key(code)) when (code) {
-                KeyEvent.KEYCODE_DPAD_DOWN -> { np.blur(); mode = if (look != Look.NIGHT && cards().isNotEmpty()) Mode.CARDS else Mode.DOCK }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { np.blur(); mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK }
                 KeyEvent.KEYCODE_DPAD_UP -> if (topItems().isNotEmpty()) { np.blur(); mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (look == Look.NIGHT && cards().isNotEmpty()) { np.blur(); mode = Mode.CARDS; ci = 0 }
             }
             Mode.DOCK -> if (look == Look.NIGHT) when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }
@@ -398,10 +397,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 val n = cards().size
                 val before = ci
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ci > 0) ci-- else if (np.reach() && look == Look.NIGHT) { mode = Mode.NP; np.focus() }
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ci > 0) ci--
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (ci < n - 1) ci++
                     KeyEvent.KEYCODE_DPAD_DOWN -> mode = Mode.DOCK
-                    KeyEvent.KEYCODE_DPAD_UP -> if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
+                    KeyEvent.KEYCODE_DPAD_UP -> if (look == Look.NIGHT && np.reach()) { mode = Mode.NP; np.focus() } else if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
                 }
                 if (ci != before) tick(SoundEffectConstants.NAVIGATION_RIGHT)
             }

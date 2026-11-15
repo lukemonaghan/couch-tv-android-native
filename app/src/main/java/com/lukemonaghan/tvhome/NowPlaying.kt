@@ -58,7 +58,7 @@ class NowPlaying(
     private var ambBtn = 1
 
     val on get() = prefs.getBoolean("np_on", true)
-    val ambientOn get() = prefs.getBoolean("np_ambient", false)
+    val ambientOn get() = prefs.getBoolean("np_ambient", true)
     val visible get() = on && track != null
     /** Whether the remote can land on the card: it shows and it has at least one button. */
     fun reach() = visible
@@ -204,20 +204,20 @@ class NowPlaying(
     private val path = Path()
 
     /** Night: the first card of the Keep watching row (this much room is left for it). Classic and OLED: top right. */
-    fun slotWidth(u: Float) = if (visible) (544 + 22) * u else 0f
+    fun slotWidth(u: Float) = 0f   // the card no longer sits in the Keep watching row
 
     /** The card. [night] puts it in the Keep watching row; otherwise it sits top right under the quick buttons. [glass] is the home's own glass panel. */
     fun draw(c: Canvas, u: Float, night: Boolean, width: Int, glass: (Canvas, Float, Float, Float, Float, Float) -> Unit) {
         val t = track ?: return
         if (!on) return
-        val w = (if (night) 544 else 496) * u
-        val h = (if (night) 141 else 100) * u
-        val x = if (night) 80 * u else width - 80 * u - w
-        val y = if (night) 692 * u else 380 * u
+        val w = (if (night) 600 else 496) * u
+        val h = (if (night) 96 else 100) * u
+        val x = if (night) (width - w) / 2 else width - 80 * u - w   // Night: centred under the clock, not in the shelf
+        val y = if (night) 546 * u else 380 * u
         val r = (if (night) 30 else 28) * u
         glass(c, x, y, x + w, y + h, r)
         val pad = (if (night) 16 else 12) * u
-        val artS = (if (night) 95 else 76) * u
+        val artS = (if (night) 68 else 76) * u
         val ax = x + pad; val ay = y + (h - artS) / 2
         art(c, art, ax, ay, artS, 16 * u)
         val names = buttons()
@@ -225,18 +225,18 @@ class NowPlaying(
         val tl = ax + artS + 16 * u
         val tr = x + w - pad - ctl - 12 * u
         text.textAlign = Paint.Align.LEFT
-        text.typeface = Fonts.semibold(ctx); text.textSize = (if (night) 19 else 15) * u; text.letterSpacing = 0.06f
+        text.typeface = Fonts.semibold(ctx); text.textSize = (if (night) 15 else 15) * u; text.letterSpacing = 0.06f
         text.color = Color.argb(158, 255, 255, 255)
         val app = TextUtils.ellipsize(t.app.uppercase(), text, tr - tl, TextUtils.TruncateAt.END)
         val cy = y + h / 2
-        c.drawText(app, 0, app.length, tl, cy - (if (night) 22 else 17) * u, text)
+        c.drawText(app, 0, app.length, tl, cy - (if (night) 20 else 17) * u, text)
         text.letterSpacing = 0f
-        text.typeface = Fonts.semibold(ctx); text.textSize = (if (night) 25 else 22) * u; text.color = Color.WHITE
+        text.typeface = Fonts.semibold(ctx); text.textSize = (if (night) 23 else 22) * u; text.color = Color.WHITE
         val title = TextUtils.ellipsize(t.title, text, tr - tl, TextUtils.TruncateAt.END)
-        c.drawText(title, 0, title.length, tl, cy + (if (night) 8 else 6) * u, text)
-        text.typeface = Fonts.regular(ctx); text.textSize = (if (night) 20 else 18) * u; text.color = Color.argb(189, 255, 255, 255)
+        c.drawText(title, 0, title.length, tl, cy + (if (night) 6 else 6) * u, text)
+        text.typeface = Fonts.regular(ctx); text.textSize = (if (night) 18 else 18) * u; text.color = Color.argb(189, 255, 255, 255)
         val sub = TextUtils.ellipsize(t.artist.ifEmpty { t.album }, text, tr - tl, TextUtils.TruncateAt.END)
-        c.drawText(sub, 0, sub.length, tl, cy + (if (night) 36 else 30) * u, text)
+        c.drawText(sub, 0, sub.length, tl, cy + (if (night) 30 else 30) * u, text)
         text.color = Color.WHITE
         // the buttons: 46 px circles, 6 apart; the full screen one is reached from the keys, shown only with the setting on
         var bx = x + w - pad - ctl

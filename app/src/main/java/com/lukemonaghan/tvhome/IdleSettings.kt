@@ -76,7 +76,7 @@ object IdleSettings {
 
         out += Item("NOW PLAYING", header = true)
         out += Item("Now playing card", "The song any app is playing, with previous, play and next", check = p.getBoolean("np_on", true)) { flip("np_on", true) }
-        out += Item("Ambient music screen", "A full screen view of the cover when a new song starts", check = p.getBoolean("np_ambient", false)) { flip("np_ambient", false) }
+        out += Item("Ambient music screen", "A full screen view of the cover when a new song starts", check = p.getBoolean("np_ambient", true)) { flip("np_ambient", true) }
         val granted = MediaListener.enabled(ctx)
         out += Item("Music access", if (granted) "Home can see what is playing" else "Needed for Now playing. OK opens Android's Notification access screen, or grant it from a computer (see MediaListener.kt)",
             value = if (granted) "On" else "Off") {
