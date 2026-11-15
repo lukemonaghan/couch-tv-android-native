@@ -380,7 +380,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             }
             Mode.NP -> if (!np.key(code)) when (code) {
                 KeyEvent.KEYCODE_DPAD_DOWN -> { np.blur(); mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK }
-                KeyEvent.KEYCODE_DPAD_UP -> if (topItems().isNotEmpty()) { np.blur(); mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_RIGHT -> if (topItems().isNotEmpty()) { np.blur(); mode = Mode.TOP; ti = if (code == KeyEvent.KEYCODE_DPAD_UP) ti.coerceIn(0, topItems().size - 1) else 0 }
             }
             Mode.DOCK -> if (look == Look.NIGHT) when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }

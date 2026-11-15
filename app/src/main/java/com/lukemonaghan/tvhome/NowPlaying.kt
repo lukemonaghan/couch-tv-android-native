@@ -149,10 +149,10 @@ class NowPlaying(
 
     private fun buttons(): List<String> {
         val t = track ?: return emptyList()
-        return listOf("prev", if (t.playing) "pause" else "play", "next") + (if (ambientOn) listOf("expand") else emptyList())
+        return emptyList()   // the card has no buttons: OK opens the music view, which has them
     }
 
-    fun focus() { focused = true; btn = 1.coerceAtMost(maxOf(0, buttons().size - 1)) }
+    fun focus() { focused = true }
     fun blur() { focused = false }
 
     /** A key while the card (or the full screen view) has the remote. True when it was used here; false lets the home move off the card. */
@@ -186,13 +186,8 @@ class NowPlaying(
             when (ambBtn) { 0 -> tc.skipToPrevious(); 1 -> toggle(t); 2 -> tc.skipToNext(); 3 -> launch(t.pkg) }
             main.postDelayed({ refresh() }, 700L); return
         }
-        when (buttons().getOrNull(btn)) {
-            "prev" -> tc.skipToPrevious()
-            "play", "pause" -> toggle(t)
-            "next" -> tc.skipToNext()
-            "expand" -> { ambientOpen = true; ambientDismissed = false; ambBtn = 1 }
-        }
-        main.postDelayed({ refresh() }, 700L)
+        ambientOpen = true; ambientDismissed = false; ambBtn = 1   // OK on the card opens the full screen music view
+        changed(false)
     }
 
     private fun toggle(t: Track) {
@@ -214,51 +209,58 @@ class NowPlaying(
     /** Night: the first card of the Keep watching row (this much room is left for it). Classic and OLED: top right. */
     fun slotWidth(u: Float) = 0f   // the card no longer sits in the Keep watching row
 
-    /** The card. [night] puts it in the Keep watching row; otherwise it sits top right under the quick buttons. [glass] is the home's own glass panel. */
+    /**
+     * The now playing card: the same size and look as a Keep watching card (520 x 141: the cover, the app, the title, the artist and a
+     * progress bar), top left in Night and top centre in the other looks, clear of the clock, the rows and the quick buttons.
+     * OK opens the full screen music view; the play, pause and skip buttons live there (and the remote's own media keys work as usual).
+     */
     fun draw(c: Canvas, u: Float, night: Boolean, width: Int, glass: (Canvas, Float, Float, Float, Float, Float) -> Unit) {
         val t = track ?: return
         if (!on) return
-        val w = (if (night) 600 else 496) * u
-        val h = (if (night) 96 else 100) * u
-        val x = if (night) (width - w) / 2 else width - 80 * u - w   // Night: centred under the clock, not in the shelf
-        val y = if (night) 546 * u else 380 * u
-        val r = (if (night) 30 else 28) * u * floatArrayOf(0.55f, 1f, 1.45f)[prefs.getInt("roundness", 1).coerceIn(0, 2)]
+        val w = 520 * u; val h = 141 * u
+        val x = if (night) 80 * u else (width - w) / 2f
+        val y = 44 * u
+        val r = 30 * u * floatArrayOf(0.55f, 1f, 1.45f)[prefs.getInt("roundness", 1).coerceIn(0, 2)]
+        val ringColor = if (prefs.getString("look", null) == "LIGHT") Color.rgb(22, 24, 31) else Color.WHITE
+        c.save()
+        if (focused && !ambientOpen) { c.translate(x + w / 2, y + h / 2); c.scale(1.05f, 1.05f); c.translate(-(x + w / 2), -(y + h / 2)) }
+        if (focused && !ambientOpen) {
+            paint.style = Paint.Style.FILL; paint.shader = null; paint.color = Color.argb(90, 0, 0, 0)
+            rect.set(x, y + 12 * u, x + w, y + h + 12 * u); c.drawRoundRect(rect, r, r, paint)
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = 3 * u; paint.color = ringColor
+            rect.set(x - 1.5f * u, y - 1.5f * u, x + w + 1.5f * u, y + h + 1.5f * u); c.drawRoundRect(rect, r + 1.5f * u, r + 1.5f * u, paint)
+            paint.style = Paint.Style.FILL
+        }
         glass(c, x, y, x + w, y + h, r)
-        if (prefs.getBoolean("cardArt", true)) bg?.let { b ->   // the cover, blurred, fills the pill like it fills the music view
+        if (prefs.getBoolean("cardArt", true)) bg?.let { b ->   // the cover, blurred, fills the card like it fills the music view
             rect.set(x, y, x + w, y + h); path.reset(); path.addRoundRect(rect, r, r, Path.Direction.CW)
-            c.save(); c.clipPath(path); paint.isFilterBitmap = true; paint.alpha = 255; paint.style = Paint.Style.FILL
+            c.save(); c.clipPath(path); paint.alpha = 255; paint.style = Paint.Style.FILL
             ArtBlur.fill(c, b, rect, paint)
             paint.color = Color.argb(intArrayOf(70, 115, 165)[prefs.getInt("cardDark", 1).coerceIn(0, 2)], 0, 0, 0); c.drawRect(rect, paint); c.restore()
         }
-        val pad = (if (night) 16 else 12) * u
-        val artS = (if (night) 68 else 76) * u
-        val ax = x + pad; val ay = y + (h - artS) / 2
-        art(c, art, ax, ay, artS, 16 * u)
-        val names = buttons()
-        val ctl = names.size * 46 * u + (names.size - 1) * 6 * u
-        val tl = ax + artS + 16 * u
-        val tr = x + w - pad - ctl - 12 * u
+        val artS = 95 * u; val pad = 16 * u
+        art(c, art, x + pad, y + (h - artS) / 2, artS, 16 * u)
+        val tl = x + pad + artS + 20 * u; val tr = x + w - pad
+        val top = y + (h - 109 * u) / 2
         text.textAlign = Paint.Align.LEFT
-        text.typeface = Fonts.semibold(ctx); text.textSize = (if (night) 15 else 15) * u; text.letterSpacing = 0.06f
-        text.color = Color.argb(158, 255, 255, 255)
-        val app = TextUtils.ellipsize(t.app.uppercase(), text, tr - tl, TextUtils.TruncateAt.END)
-        val cy = y + h / 2
-        c.drawText(app, 0, app.length, tl, cy - (if (night) 20 else 17) * u, text)
+        text.typeface = Fonts.medium(ctx); text.textSize = 19 * u; text.letterSpacing = 0.06f; text.color = Color.argb(148, 255, 255, 255)
+        val app = TextUtils.ellipsize((if (t.playing) t.app else t.app + "  ·  PAUSED").uppercase(), text, tr - tl, TextUtils.TruncateAt.END)
+        c.drawText(app, 0, app.length, tl, top + 18 * u, text)
         text.letterSpacing = 0f
-        text.typeface = Fonts.semibold(ctx); text.textSize = (if (night) 23 else 22) * u; text.color = Color.WHITE
+        text.typeface = Fonts.semibold(ctx); text.textSize = 29 * u; text.color = Color.rgb(245, 245, 247)
         val title = TextUtils.ellipsize(t.title, text, tr - tl, TextUtils.TruncateAt.END)
-        c.drawText(title, 0, title.length, tl, cy + (if (night) 6 else 6) * u, text)
-        text.typeface = Fonts.regular(ctx); text.textSize = (if (night) 18 else 18) * u; text.color = Color.argb(189, 255, 255, 255)
+        c.drawText(title, 0, title.length, tl, top + 52 * u, text)
+        text.typeface = Fonts.regular(ctx); text.textSize = 21 * u; text.color = Color.argb(199, 255, 255, 255)
         val sub = TextUtils.ellipsize(t.artist.ifEmpty { t.album }, text, tr - tl, TextUtils.TruncateAt.END)
-        c.drawText(sub, 0, sub.length, tl, cy + (if (night) 30 else 30) * u, text)
-        text.color = Color.WHITE
-        // the buttons: 46 px circles, 6 apart; the full screen one is reached from the keys, shown only with the setting on
-        var bx = x + w - pad - ctl
-        for ((i, n) in names.withIndex()) {
-            val f = focused && !ambientOpen && btn == i
-            round(c, bx + 23 * u, cy, 23 * u, f, n, u)
-            bx += 52 * u
+        c.drawText(sub, 0, sub.length, tl, top + 82 * u, text)
+        if (t.duration > 0) {
+            val pos = if (t.playing) t.position + (SystemClock.uptimeMillis() - readAt) else t.position
+            val by = top + 104 * u
+            paint.color = Color.argb(64, 255, 255, 255); rect.set(tl, by, tr, by + 5 * u); c.drawRoundRect(rect, 3 * u, 3 * u, paint)
+            paint.color = Color.WHITE; rect.set(tl, by, tl + (tr - tl) * (pos.toFloat() / t.duration).coerceIn(0f, 1f), by + 5 * u); c.drawRoundRect(rect, 3 * u, 3 * u, paint)
         }
+        text.color = Color.WHITE
+        c.restore()
     }
 
     private fun art(c: Canvas, b: Bitmap?, x: Float, y: Float, s: Float, radius: Float) {
