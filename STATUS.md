@@ -3,7 +3,7 @@
 Read `CLAUDE.md` and `note.md` first. This file says where the work stopped.
 
 ## Where things are
-- Repo: `/home/lukem/Documents/git/couch-tv-android-native`, local git only, no remote. Branch `main`, head `a83ed79`.
+- Repo: `/home/lukem/Documents/git/couch-tv-android-native`, local git only, no remote. Branch `main`, head `f064be0` plus later commits (see `git log`).
 - Build: `export JAVA_HOME=/home/lukem/Documents/git/couch-tv/build/jdk ANDROID_HOME=/home/lukem/Documents/git/couch-tv/build/android-sdk; ./gradlew --no-daemon -q assembleDebug`
 - Everything merged into `main` builds. Nothing from the merged feature branches has been run on the emulator or a TV yet.
 
@@ -15,7 +15,18 @@ Read `CLAUDE.md` and `note.md` first. This file says where the work stopped.
 - `feat/idle`: Smart Idle, soundscape, navigation sound, ambient weather effects, Now playing card and music screen.
 - Merge fixes I made: Input list and Soundscape added to `QuickButtons.ALL`; dock index clamps use `dockSlots()`.
 
-## NOT merged yet
+## Update, same day: feat/looks is now merged too (`f064be0`)
+All six feature branches are in `main` and it builds. Worktrees in `../couch-tv-android-native-wt/` can be removed with `git worktree remove`.
+
+### Emulator check done after the merge (2026-11-15)
+Seeded prefs by writing `shared_prefs/home.xml` (script idea: push XML to /data/local/tmp, `run-as ... cp`, force-stop, start). No crashes in logcat.
+- OK: Night with glass on, glass app icons, liquid clock; ten quick buttons in Night (round) and five in Classic (labelled pills); three-person avatar button and its list popup; Classic hero title ("The Bear") top left; Settings pages (Location, Weather, Look and scenes, Apps, People, Quick buttons, Idle and sound, Smart home, Updates, About) and the Look page's glass, moving tiles, lighter home, clock style, bedtime, video link and photo rows; OLED default.
+- Not yet checked: kids mode and PIN pad, Smart home screen, Doorbell, Updater, Now playing card, soundscape audio, Smart Idle, hold-OK menus (hide, dismiss show), Input menu, screen off, moving-tile animation, rain/snow fx, video background, own photos.
+- Seen but not fixed: with ten quick buttons the Night row runs over the centred date line (the reference would crowd too); OLED look with glass on plus weather fx once showed a flat dark green background (not reproduced with defaults, so look at that combination).
+- Note: restarting the app twice within seconds (force-stop in test scripts) makes CrashGuard think it crashed and show the TV's own home for a few minutes. Clear it with `adb shell "run-as com.lukemonaghan.tvhome rm -f shared_prefs/crash_guard.xml"`.
+- No side-by-side comparison with the Playwright reference was done yet for the new features.
+
+## (old note) NOT merged yet
 - **`feat/looks`** (commit `4387d16`, worktree `../couch-tv-android-native-wt/looks`): glass options, glass app icons, liquid clock, lighter home, moving tiles, keep one photo, own photos, video background, OLED shift, bedtime amber dimming. Run `git merge --no-ff feat/looks` on main. Expect conflicts in `HomeView.kt`, `SceneRenderer.kt`, `SettingsScreen.kt`, `MainActivity.kt`, `AndroidManifest.xml`. Resolve by keeping both sides, as for the other branches.
 - Worktrees `../couch-tv-android-native-wt/{apps,quick,people,looks,idle,platform}` can be removed with `git worktree remove` once looks is merged.
 
