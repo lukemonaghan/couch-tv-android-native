@@ -41,7 +41,7 @@ interface HomeActions {
  * The remote's D-pad drives everything through the key callbacks below.
  */
 class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
-    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS, TOP }
+    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS, TOP, NP }
     /** Night: the scene with the big glass clock and the dock. OLED: a grid on pure black. Classic: a grid over the photo. */
     private enum class Look { NIGHT, OLED, CLASSIC }
 
@@ -78,6 +78,23 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val icons = Icons(ctx) { invalidate() }
     private val watch = WatchNext(ctx) { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); if (cards().isEmpty() && mode == Mode.CARDS) mode = Mode.DOCK; invalidate() }
 
+    // idle, sound, ambient weather and Now playing (IdleLayer, AmbientFx, NowPlaying): see SmartIdle.kt and friends
+    private val navSound = NavSound()
+    private val idle = IdleLayer(ctx, prefs, act as? IdleHost, { postInvalidateOnAnimation() },
+        { clockText(Calendar.getInstance()) }, { dateText(Calendar.getInstance()) }, { weather.text() },
+        { mode == Mode.DOCK || mode == Mode.CARDS || mode == Mode.TOP || mode == Mode.NP })
+    private val fx = AmbientFx(prefs, weather) { postInvalidateDelayed(40) }
+    private val np = NowPlaying(ctx, prefs, { act.launch(it) }) { auto -> onNowPlaying(auto) }
+
+    /** The music changed: a new song may open the full screen view, and a card that has gone gives the remote back. */
+    private fun onNowPlaying(auto: Boolean) {
+        val zone = mode == Mode.DOCK || mode == Mode.CARDS || mode == Mode.TOP
+        if (auto && zone && !idle.overlayActive()) { mode = Mode.NP; np.focus() }
+        else if (!np.visible && mode == Mode.NP) { np.blur(); mode = Mode.DOCK }
+        else if (np.ambientOpen && mode != Mode.NP) np.abandonAmbient()
+        invalidate()
+    }
+
     /** Keep watching: the Watch Next list. With the "demoCards" pref set (screenshots) two made-up shows stand in. */
     private fun cards(): List<Card> =
         if (watch.cards.isEmpty() && prefs.getBoolean("demoCards", false)) DEMO else watch.cards
@@ -99,7 +116,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ---- the top row: the people switch (top left) and the quick buttons (top right)
 
     fun people(): List<String> = prefs.getString("people", null)?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
-    private fun quick(): List<String> = (prefs.getString("quick", null) ?: "sleep,look").split(',').filter { it == "sleep" || it == "look" }
+    private fun quick(): List<String> = (prefs.getString("quick", null) ?: "sleep,look").split(',').filter { it == "sleep" || it == "look" || it == "soundscape" }
     private val sleepOptions = listOf(0, 15, 30, 60, 90)
     private var sleepIdx = 0
 
@@ -186,13 +203,18 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         isFocusableInTouchMode = true
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); requestFocus(); minuteTick.run(); main.postDelayed(rotate, prefs.getInt("sceneSeconds", 20) * 1000L) }
-    override fun onDetachedFromWindow() { main.removeCallbacks(minuteTick); main.removeCallbacks(rotate); super.onDetachedFromWindow() }
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility == VISIBLE) { idle.wake(); np.start(); if (mode == Mode.NP) { np.blur(); np.abandonAmbient(); mode = Mode.DOCK } } else { idle.stopSound(); np.stop() }   // no soundscape or music polling behind an app
+    }
+
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); idle.start(); requestFocus(); minuteTick.run(); main.postDelayed(rotate, prefs.getInt("sceneSeconds", 20) * 1000L) }
+    override fun onDetachedFromWindow() { idle.stop(); np.stop(); navSound.release(); main.removeCallbacks(minuteTick); main.removeCallbacks(rotate); super.onDetachedFromWindow() }
 
     // ------------------------------------------------------------------ what the Activity calls
 
     /** Home pressed while the home is already showing: back to the first tile. */
-    fun goHome() { mode = Mode.DOCK; fi = 0; invalidate() }
+    fun goHome() { idle.wake(); np.blur(); np.abandonAmbient(); mode = Mode.DOCK; fi = 0; invalidate() }
 
     /** The app list changed (a package came or went, or the home came back to the front). */
     fun refresh() {
@@ -213,6 +235,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         Mode.MENU -> { mode = menuFrom; invalidate(); true }
         Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, store.line + 1); invalidate(); true }
         Mode.CARDS, Mode.TOP -> { mode = Mode.DOCK; invalidate(); true }
+        Mode.NP -> { if (np.ambientOpen) np.closeAmbient(true) else { np.blur(); mode = Mode.DOCK }; invalidate(); true }
         Mode.SETTINGS -> { if (!settings.back()) { mode = Mode.DOCK; fi = store.line }; invalidate(); true }
         Mode.DOCK -> false
     }
@@ -220,6 +243,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ------------------------------------------------------------------ keys
 
     override fun onKeyDown(code: Int, e: KeyEvent): Boolean {
+        val volume = code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN || code == KeyEvent.KEYCODE_VOLUME_MUTE
+        if (!volume && idle.key()) return true   // it only woke the ambient clock or the hidden rows
         when (code) {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
                 dir(code); return true
@@ -243,6 +268,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     override fun onKeyUp(code: Int, e: KeyEvent): Boolean {
+        if (idle.eatUp()) return true
         if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
             if (!longHandled) press()
             return true
@@ -258,7 +284,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         invalidate()
     }
 
-    private fun tick(sound: Int) { playSoundEffect(sound) }
+    private fun tick(sound: Int) { navSound.tick(this, sound, prefs.getString("nav_sound", "system") ?: "system") }
 
     private fun cycleLook() {
         look = Look.values()[(look.ordinal + 1) % Look.values().size]
@@ -280,20 +306,25 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 when (code) {
                     KeyEvent.KEYCODE_DPAD_LEFT -> if (ti > 0) ti--
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (ti < n - 1) ti++
-                    KeyEvent.KEYCODE_DPAD_DOWN -> mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK
+                    KeyEvent.KEYCODE_DPAD_DOWN -> if (np.reach() && (look != Look.NIGHT || cards().isEmpty())) { mode = Mode.NP; np.focus() } else mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK
                 }
+            }
+            Mode.NP -> if (!np.key(code)) when (code) {
+                KeyEvent.KEYCODE_DPAD_DOWN -> { np.blur(); mode = if (look != Look.NIGHT && cards().isNotEmpty()) Mode.CARDS else Mode.DOCK }
+                KeyEvent.KEYCODE_DPAD_UP -> if (topItems().isNotEmpty()) { np.blur(); mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (look == Look.NIGHT && cards().isNotEmpty()) { np.blur(); mode = Mode.CARDS; ci = 0 }
             }
             Mode.DOCK -> if (look == Look.NIGHT) when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) { fi++; tick(SoundEffectConstants.NAVIGATION_RIGHT) }
-                KeyEvent.KEYCODE_DPAD_UP -> if (cards().isNotEmpty()) { mode = Mode.CARDS; ci = ci.coerceIn(0, cards().size - 1) } else if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
+                KeyEvent.KEYCODE_DPAD_UP -> if (cards().isNotEmpty()) { mode = Mode.CARDS; ci = ci.coerceIn(0, cards().size - 1) } else if (np.reach()) { mode = Mode.NP; np.focus() } else if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
                 KeyEvent.KEYCODE_DPAD_DOWN -> openMore(if (fi < store.line) fi else 0)
             } else {
                 val before = fi
                 when (code) {
                     KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) fi--
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (fi < dockCount - 1) fi++
-                    KeyEvent.KEYCODE_DPAD_UP -> if (fi >= gridCols) fi -= gridCols else if (cards().isNotEmpty()) { mode = Mode.CARDS; ci = ci.coerceIn(0, cards().size - 1) } else if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
+                    KeyEvent.KEYCODE_DPAD_UP -> if (fi >= gridCols) fi -= gridCols else if (cards().isNotEmpty()) { mode = Mode.CARDS; ci = ci.coerceIn(0, cards().size - 1) } else if (np.reach()) { mode = Mode.NP; np.focus() } else if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
                     KeyEvent.KEYCODE_DPAD_DOWN -> if (fi + gridCols < dockCount) fi += gridCols else if (fi / gridCols == (dockCount - 1) / gridCols) openMore(if (fi < store.line) fi else 0) else fi = dockCount - 1
                 }
                 if (fi != before) tick(SoundEffectConstants.NAVIGATION_DOWN)
@@ -302,7 +333,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 val n = cards().size
                 val before = ci
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ci > 0) ci--
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ci > 0) ci-- else if (np.reach() && look == Look.NIGHT) { mode = Mode.NP; np.focus() }
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (ci < n - 1) ci++
                     KeyEvent.KEYCODE_DPAD_DOWN -> mode = Mode.DOCK
                     KeyEvent.KEYCODE_DPAD_UP -> if (topItems().isNotEmpty()) { mode = Mode.TOP; ti = ti.coerceIn(0, topItems().size - 1) }
@@ -356,9 +387,11 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                     "person" -> prefs.edit().putInt("person", people().indexOf(t.label).coerceAtLeast(0)).apply()
                     "sleep" -> { sleepIdx = (sleepIdx + 1) % sleepOptions.size; act.setSleepTimer(sleepOptions[sleepIdx]) }
                     "look" -> cycleLook()
+                    "soundscape" -> idle.cycleSound()
                 }
                 invalidate()
             }
+            Mode.NP -> np.press()
             Mode.CARDS -> cards().getOrNull(ci)?.let { act.openCard(it.pkg, it.intentUri) }
             Mode.MORE -> store.items.getOrNull(mi)?.let { launch(it) }
             Mode.MENU -> chooseMenu()
@@ -446,8 +479,15 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     override fun onDraw(c: Canvas) {
+        if (idle.coversHome()) { idle.drawOver(c, width, height); return }   // the ambient clock or the dark screen: nothing underneath to draw
+        drawHome(c)
+        idle.drawOver(c, width, height)
+    }
+
+    private fun drawHome(c: Canvas) {
         val u = height / 1080f
         if (mode == Mode.SETTINGS) { settings.draw(c, width, height); return }
+        if (np.ambientOpen) { np.drawAmbient(c, width, height, u); postInvalidateDelayed(100); return }
         if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || look == Look.OLED) {
             c.drawColor(if (look == Look.OLED && mode != Mode.MORE) Color.BLACK else ground)
         } else {
@@ -467,11 +507,19 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 paint.shader = null
             }
         }
+        val moreShown = mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE)
+        if (look != Look.OLED && !moreShown) fx.draw(c, width, height)   // sun colour and weather, over the scene, under everything else
         drawClock(c, u)
-        when (mode) {
-            Mode.MORE -> drawMore(c, u)
-            Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else { drawTop(c, u); drawCards(c, u); drawDock(c, u) }; drawMenu(c, u) }
-            else -> { drawTop(c, u); drawCards(c, u); drawDock(c, u) }
+        val ra = idle.rowsAlpha()   // Hide rows when idle: the rows fade, the clock and scene stay
+        if (ra > 0f) {
+            if (ra < 1f) c.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (ra * 255).toInt())
+            when (mode) {
+                Mode.MORE -> drawMore(c, u)
+                Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else { drawTop(c, u); drawCards(c, u); drawDock(c, u) }; drawMenu(c, u) }
+                else -> { drawTop(c, u); drawCards(c, u); drawDock(c, u) }
+            }
+            if (!moreShown) np.draw(c, u, look == Look.NIGHT, width, ::glass)
+            if (ra < 1f) c.restore()
         }
     }
 
@@ -516,7 +564,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val pl = (width - pw) / 2f
         val pt = height - 46 * u - ph
         glass(c, pl, pt, pl + pw, pt + ph, 46 * u)
-        val focus = if (mode == Mode.MOVING) movingIndex else if (mode == Mode.CARDS || mode == Mode.TOP) -1 else fi
+        val focus = if (mode == Mode.MOVING) movingIndex else if (mode == Mode.CARDS || mode == Mode.TOP || mode == Mode.NP) -1 else fi
         for (pass in 0..1) for (i in 0 until n) {
             if ((i == focus) != (pass == 1)) continue
             nightIcon(c, u, pl + padX + i * (tw + gap), pt + padY, tw, i, i == focus, mode == Mode.MOVING)
@@ -605,8 +653,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         var right = width - 80 * u
         for (q in items.filter { it.kind != "person" }.asReversed()) {
             val idx = items.indexOf(q); val focus = mode == Mode.TOP && ti == idx
-            val set = q.kind == "sleep" && sleepOptions[sleepIdx] > 0
-            val label = when { q.kind == "look" -> "Look"; set -> "${sleepOptions[sleepIdx]} min"; else -> "Sleep timer" }
+            val set = (q.kind == "sleep" && sleepOptions[sleepIdx] > 0) || (q.kind == "soundscape" && idle.soundType() != "off")
+            val label = when { q.kind == "look" -> "Look"; q.kind == "soundscape" -> idle.soundLabel(); set -> "${sleepOptions[sleepIdx]} min"; else -> "Sleep timer" }
             val w = 16 * u + 24 * u + 10 * u + text.measureText(label) + 20 * u
             val l = right - w
             rect.set(l, 312 * u, right, 360 * u)
@@ -630,6 +678,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             rect.set(cx - r * 0.35f, cy - r * 1.05f, cx + r * 1.2f, cy + r * 0.95f)
             clip.arcTo(rect, 290f, -220f, false)
             c.drawPath(clip, paint)
+        } else if (kind == "soundscape") {   // sound waves: three bars of different heights
+            for ((i, hgt) in floatArrayOf(10f, 20f, 14f, 24f).withIndex()) c.drawLine(cx + (i - 1.5f) * 9 * u, cy - hgt * u * 0.5f, cx + (i - 1.5f) * 9 * u, cy + hgt * u * 0.5f, paint)
         } else {                 // a sun-like look switch: a circle with rays
             c.drawCircle(cx, cy, 8 * u, paint)
             for (a in 0 until 8) {
@@ -655,7 +705,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         for (pass in 0..1) for (i in first until list.size) {
             val focused = mode == Mode.CARDS && i == ci
             if (focused != (pass == 1)) continue
-            val x = 80 * u + (i - first) * (cw + gap)
+            val x = 80 * u + np.slotWidth(u) + (i - first) * (cw + gap)
             if (x > width) continue
             drawCard(c, u, list[i], x, top, cw, ch, focused)
         }

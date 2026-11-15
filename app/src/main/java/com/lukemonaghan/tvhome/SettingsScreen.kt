@@ -25,7 +25,7 @@ class SettingsScreen(
     private class Row(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
                        val header: Boolean = false, val press: (() -> Unit)? = null)
 
-    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "About")
+    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "Idle and sound", "About")
     private var page = 0
     private var inRows = false
     private var row = 0
@@ -113,8 +113,10 @@ class SettingsScreen(
             listOf(
                 Row("Sleep timer", "Lets the TV go to sleep after 15, 30, 60 or 90 minutes", check = "sleep" in q) { toggle("sleep") },
                 Row("Look switch", "Flips between Night, OLED and Classic", check = "look" in q) { toggle("look") },
+                Row("Soundscape", "Rain, fire, waves or brown noise, from the top row", check = "soundscape" in q) { toggle("soundscape") },
             )
         }
+        "Idle and sound" -> IdleSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, it.press) }
         else -> listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
             Row("Android settings", "Wi-Fi, display, accounts and the rest") { act.openSettings() },
