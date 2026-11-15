@@ -845,9 +845,17 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             if ((i == focus) != (pass == 1)) continue
             nightIcon(c, u, pl + padX + i * (tw + gap), pt + padY, tw, i, i == focus, mode == Mode.MOVING)
         }
-        // Settings: its own round button in the bottom right corner
+        // Settings: a round glass button in the bottom right corner, the same as the quick buttons at the top
         val gs = 88 * u
-        nightIcon(c, u, width - 80 * u - gs, height - 46 * u - gs, gs, gearIdx(), gearIdx() == focus, false)
+        val gl = width - 80 * u - gs; val gt = height - 46 * u - gs
+        val gf = gearIdx() == focus
+        val am = anim(gearIdx(), gf)
+        if (am > 0.001f) { paint.style = Paint.Style.FILL; paint.color = ink; paint.alpha = (255 * am).toInt(); rect.set(gl - 3 * u, gt - 3 * u, gl + gs + 3 * u, gt + gs + 3 * u); c.drawRoundRect(rect, 47 * u, 47 * u, paint) }
+        glass(c, gl, gt, gl + gs, gt + gs, 44 * u)
+        if (am > 0.001f) { paint.style = Paint.Style.FILL; paint.color = ink; paint.alpha = (255 * am).toInt(); rect.set(gl, gt, gl + gs, gt + gs); c.drawRoundRect(rect, 44 * u, 44 * u, paint) }
+        paint.alpha = 255
+        glyph(c, u, gl + gs / 2, gt + gs / 2, 112 * u * 0.62f, true, if (am > 0.5f) Color.rgb(17, 17, 17) else ink)
+        if (Updater.ready) { paint.style = Paint.Style.FILL; paint.color = Color.parseColor("#3D8BFF"); paint.alpha = 255; c.drawCircle(gl + gs - 8 * u, gt + 8 * u, 7 * u, paint) }
     }
 
     /** Night's top row: the people switch at 80, 60 and the round quick buttons at the right edge. */
@@ -1202,9 +1210,9 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         .82f, 0f, 0f, 0f, 0f, 0f, .82f, 0f, 0f, 0f, 0f, 0f, .82f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)))
 
     /** The gear and the three dots, drawn with strokes the way couch-tv's icons are (24 unit grid, 36 px, stroke 1.7). */
-    private fun glyph(c: Canvas, u: Float, cx: Float, cy: Float, size: Float, gear: Boolean) {
+    private fun glyph(c: Canvas, u: Float, cx: Float, cy: Float, size: Float, gear: Boolean, col: Int = Color.WHITE) {
         val k = 58f * u / 24f * (size / (112 * u))
-        paint.style = Paint.Style.STROKE; paint.color = ink; paint.alpha = 255
+        paint.style = Paint.Style.STROKE; paint.color = col; paint.alpha = 255
         paint.strokeWidth = 1.7f * k; paint.strokeCap = Paint.Cap.ROUND
         if (gear) {
             c.drawCircle(cx, cy, 3.1f * k, paint)
