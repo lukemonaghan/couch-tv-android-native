@@ -99,7 +99,9 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ---- the top row: the people switch (top left) and the quick buttons (top right)
 
     fun people(): List<String> = prefs.getString("people", null)?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
-    private fun quick(): List<String> = (prefs.getString("quick", null) ?: "sleep,look").split(',').filter { it == "sleep" || it == "look" }
+    private fun quick(): List<String> = (prefs.getString("quick", null) ?: "sleep,look").split(',')
+        .filter { it == "sleep" || it == "look" || (it == "input" && store.inputsAvailable) }
+    private val qAnchor = HashMap<String, FloatArray>()   // each quick button's right edge and bottom, where the Input menu hangs from
     private val sleepOptions = listOf(0, 15, 30, 60, 90)
     private var sleepIdx = 0
 
@@ -321,7 +323,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             }
             Mode.MENU -> when (code) {
                 KeyEvent.KEYCODE_DPAD_UP -> if (menuPick > 0) menuPick--
-                KeyEvent.KEYCODE_DPAD_DOWN -> if (menuPick < MENU_OPTIONS - 1) menuPick++
+                KeyEvent.KEYCODE_DPAD_DOWN -> if (menuPick < menuNames().size - 1) menuPick++
             }
             Mode.MOVING -> when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (movingIndex > 0) { store.moveInDock(movingIndex, movingIndex - 1); movingIndex-- }
@@ -356,6 +358,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                     "person" -> prefs.edit().putInt("person", people().indexOf(t.label).coerceAtLeast(0)).apply()
                     "sleep" -> { sleepIdx = (sleepIdx + 1) % sleepOptions.size; act.setSleepTimer(sleepOptions[sleepIdx]) }
                     "look" -> cycleLook()
+                    "input" -> qAnchor["input"].let { a -> InputMenu.show(context, a?.get(0) ?: (width - 80 * height / 1080f), a?.get(1) ?: (148 * height / 1080f)) }
                 }
                 invalidate()
             }
@@ -381,7 +384,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         invalidate()
     }
 
-    private fun launch(a: AppItem) { store.opened(a.pkg); act.launch(a.pkg); invalidate() }
+    private fun launch(a: AppItem) {
+        if (a.inputId != null) { if (!TvInputs.open(context, a.inputId)) TvInputs.say(context, TvInputs.NO_INPUTS); return }   // a pinned TV input
+        store.opened(a.pkg); act.launch(a.pkg); invalidate()
+    }
 
     private fun openMenu(index: Int) {
         menuFrom = mode
@@ -392,13 +398,25 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun chooseMenu() {
         val a = store.items.getOrNull(menuIndex) ?: run { mode = menuFrom; return }
-        when (menuPick) {
-            0 -> { mode = Mode.MOVING; movingIndex = menuIndex }   // menuIndex is always in the dock here
-            1 -> { mode = menuFrom; act.uninstall(a.pkg) }
-            2 -> { mode = menuFrom; act.appInfo(a.pkg) }
+        when (menuNames().getOrNull(menuPick)) {
+            "Move" -> { mode = Mode.MOVING; movingIndex = menuIndex }   // menuIndex is always in the dock here
+            "Hide from home", "Remove from home" -> {
+                store.hide(a.pkg)
+                mode = menuFrom
+                fi = fi.coerceIn(0, store.line + 1)
+                mi = mi.coerceIn(0, maxOf(0, store.items.size - 1))
+                TvInputs.say(context, "Hidden. Show it again in Settings, Apps.")
+            }
+            "Uninstall" -> { mode = menuFrom; act.uninstall(a.pkg) }
+            "App info" -> { mode = menuFrom; act.appInfo(a.pkg) }
         }
         invalidate()
     }
+
+    /** The hold-OK menu's rows: an app can be moved, hidden, uninstalled or looked up; a pinned TV input can be moved or taken off. */
+    private fun menuNames(): List<String> =
+        if (store.items.getOrNull(menuIndex)?.inputId != null) listOf("Move", "Remove from home")
+        else listOf("Move", "Hide from home", "Uninstall", "App info")
 
     // ------------------------------------------------------------------ drawing
 
@@ -562,6 +580,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             val label = if (q.kind == "sleep" && sleepOptions[sleepIdx] > 0) "${sleepOptions[sleepIdx]}m" else ""
             val w = 88 * u.coerceAtLeast(0.01f) + (if (label.isNotEmpty()) 70 * u else 0f) + 4 * u
             val l = right - w
+            qAnchor.getOrPut(q.kind) { FloatArray(2) }.also { it[0] = right; it[1] = 148 * u }
             if (focus) {
                 paint.style = Paint.Style.FILL; paint.color = Color.WHITE
                 rect.set(l - 3 * u, 57 * u, right + 3 * u, 151 * u); c.drawRoundRect(rect, 47 * u, 47 * u, paint)
@@ -606,9 +625,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         for (q in items.filter { it.kind != "person" }.asReversed()) {
             val idx = items.indexOf(q); val focus = mode == Mode.TOP && ti == idx
             val set = q.kind == "sleep" && sleepOptions[sleepIdx] > 0
-            val label = when { q.kind == "look" -> "Look"; set -> "${sleepOptions[sleepIdx]} min"; else -> "Sleep timer" }
+            val label = when { q.kind == "look" -> "Look"; q.kind == "input" -> "Input"; set -> "${sleepOptions[sleepIdx]} min"; else -> "Sleep timer" }
             val w = 16 * u + 24 * u + 10 * u + text.measureText(label) + 20 * u
             val l = right - w
+            qAnchor.getOrPut(q.kind) { FloatArray(2) }.also { it[0] = right; it[1] = 360 * u }
             rect.set(l, 312 * u, right, 360 * u)
             paint.style = Paint.Style.FILL
             paint.color = if (focus) Color.WHITE else if (set) Color.argb(168, 16, 16, 20) else Color.argb(117, 16, 16, 20)
@@ -630,6 +650,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             rect.set(cx - r * 0.35f, cy - r * 1.05f, cx + r * 1.2f, cy + r * 0.95f)
             clip.arcTo(rect, 290f, -220f, false)
             c.drawPath(clip, paint)
+        } else if (kind == "input") {   // a screen with an arrow into it
+            Glyphs.input(c, paint, cx, cy, 1.5f * u, color, 2.1f)
         } else {                 // a sun-like look switch: a circle with rays
             c.drawCircle(cx, cy, 8 * u, paint)
             for (a in 0 until 8) {
@@ -1009,7 +1031,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
         val w = 560 * u
         val rowH = 84 * u
-        val h = 110 * u + MENU_OPTIONS * rowH
+        val names = menuNames()
+        val h = 110 * u + names.size * rowH
         val l = (width - w) / 2f
         val t = (height - h) / 2f
         rect.set(l, t, l + w, t + h)
@@ -1019,8 +1042,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         text.textSize = 32 * u
         val title = TextUtils.ellipsize(store.items.getOrNull(menuIndex)?.label.orEmpty(), text, w - 80 * u, TextUtils.TruncateAt.END)
         c.drawText(title, 0, title.length, l + 40 * u, t + 70 * u, text)
-        val names = arrayOf("Move", "Uninstall", "App info")
-        for (i in 0 until MENU_OPTIONS) {
+        for (i in names.indices) {
             val ry = t + 100 * u + i * rowH
             if (i == menuPick) {
                 rect.set(l + 20 * u, ry, l + w - 20 * u, ry + rowH - 8 * u)
@@ -1038,6 +1060,5 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Card(-2, "au.net.abc.iview", "ABC iview", "Fisk", "S3 E1", null, 0.55f, null),
         )
         const val COLS = 6
-        const val MENU_OPTIONS = 3
     }
 }

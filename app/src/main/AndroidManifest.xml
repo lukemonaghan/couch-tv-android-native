@@ -30,6 +30,23 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
+        <!-- Fire TV's Appstore has no Leanback tile, so the app list asks for it by name. -->
+        <package android:name="com.amazon.venezia" />
+        <!-- The TV's input list, for the Input button. -->
+        <intent><action android:name="android.settings.TV_INPUT_SETTINGS" /></intent>
+        <intent><action android:name="com.android.tv.action.VIEW_INPUTS" /></intent>
+        <intent><action android:name="com.google.android.tv.action.VIEW_INPUTS" /></intent>
+        <intent><action android:name="android.media.tv.action.SETUP_INPUTS" /></intent>
+        <!-- The Input menu: the TV's own app that plays an input when asked to view its passthrough channel. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:host="android.media.tv" />
+        </intent>
+        <!-- The Input menu's Bluetooth and Network rows: the TV's own settings screens. -->
+        <intent><action android:name="android.settings.BLUETOOTH_SETTINGS" /></intent>
+        <intent><action android:name="android.settings.WIFI_SETTINGS" /></intent>
+        <intent><action android:name="android.settings.WIRELESS_SETTINGS" /></intent>
+        <intent><action android:name="android.settings.SETTINGS" /></intent>
     </queries>
 
     <application

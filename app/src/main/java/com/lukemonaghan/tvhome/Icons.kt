@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.os.Handler
@@ -48,8 +49,12 @@ class Icons(private val ctx: Context, private val onLoaded: () -> Unit) {
         worker.execute {
             val bmp = runCatching {
                 val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-                val ic = app.ri.activityInfo.loadIcon(ctx.packageManager)
-                ic.setBounds(0, 0, size, size); ic.draw(Canvas(out)); out
+                if (app.inputId != null) {   // a TV input: the HDMI plug, about 46% of the tile once the dock insets it
+                    Glyphs.hdmi(Canvas(out), Paint(Paint.ANTI_ALIAS_FLAG), size / 2f, size / 2f, size * 0.66f / 24f); out
+                } else {
+                    val ic = app.ri!!.activityInfo.loadIcon(ctx.packageManager)
+                    ic.setBounds(0, 0, size, size); ic.draw(Canvas(out)); out
+                }
             }.getOrNull()
             main.post { pending.remove(key); if (bmp != null) { cache.put(key, bmp); onLoaded() } }
         }
@@ -58,7 +63,14 @@ class Icons(private val ctx: Context, private val onLoaded: () -> Unit) {
 
     private fun draw(app: AppItem, w: Int, h: Int): Bitmap {
         val pm = ctx.packageManager
-        val ai = app.ri.activityInfo
+        if (app.inputId != null) {   // a TV input: a dark tile with the HDMI plug
+            val tile = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val tc = Canvas(tile)
+            tc.drawColor(Color.parseColor("#1E1C26"))
+            Glyphs.hdmi(tc, Paint(Paint.ANTI_ALIAS_FLAG), w / 2f, h / 2f, h * 0.49f / 24f)
+            return tile
+        }
+        val ai = app.ri!!.activityInfo
         val banner: Drawable? = runCatching { ai.loadBanner(pm) }.getOrNull()
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
