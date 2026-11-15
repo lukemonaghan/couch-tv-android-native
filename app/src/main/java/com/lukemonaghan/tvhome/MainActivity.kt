@@ -23,6 +23,8 @@ class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
     private lateinit var home: HomeView
     private lateinit var video: VideoBackground
     private var packageWatcher: BroadcastReceiver? = null
+    private lateinit var root: android.widget.FrameLayout
+    private var viz: Visualiser? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,10 +43,12 @@ class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
         // the optional video background sits behind the home (VideoBackground.kt): invisible until a clip really plays
         video = VideoBackground(this, home.looks)
         home.videoHook = { video.sync() }
-        val root = android.widget.FrameLayout(this)
+        root = android.widget.FrameLayout(this)
         root.addView(video, android.widget.FrameLayout.LayoutParams(-1, -1))
         root.addView(home, android.widget.FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
+        home.vizHook = { on -> main.post { if (on) startViz() else stopViz() } }
+        home.vizStep = { d -> viz?.let { if (d > 0) it.next() else it.previous() } }
         FireWatch.ensure(this)   // only once a computer has granted WRITE_SECURE_SETTINGS over ADB
         main.postDelayed({ FireWatch.rebindIfUnbound(applicationContext) }, 10_000L)   // listed but not bound after a force-stop
         watchPackages()
@@ -70,7 +74,24 @@ class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
         if (::video.isInitialized) video.resume()
     }
 
-    override fun onPause() { resumed = false; if (::video.isInitialized) video.pause(); super.onPause() }
+    /** The MilkDrop visualiser goes between the video and the home, and only exists while the music view uses it. */
+    private fun startViz() {
+        if (viz != null || isFinishing || isDestroyed) return
+        val prefs = getSharedPreferences("home", MODE_PRIVATE)
+        val v = Visualiser(this, prefs, home.audio, { if (viz != null) home.vizLive(true) }, { n -> home.vizName(n) })
+        viz = v
+        root.addView(v, 1, android.widget.FrameLayout.LayoutParams(-1, -1))
+    }
+
+    private fun stopViz() {
+        val v = viz ?: return
+        viz = null
+        home.vizLive(false)
+        v.shutDown()
+        root.removeView(v)
+    }
+
+    override fun onPause() { resumed = false; stopViz(); if (::video.isInitialized) video.pause(); super.onPause() }
 
     // ---- Home settings, Look and scenes, Your photos: Android's file picker, where the TV has one
     override fun pickPhotos(): Boolean {

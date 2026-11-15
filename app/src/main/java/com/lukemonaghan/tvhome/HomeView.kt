@@ -82,6 +82,13 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val clear = ClearIcon(ctx) { invalidate() }
     /** Set by the Activity: starts, stops or re-dims the video background when the looks, the minute or the hour change. */
     var videoHook: (() -> Unit)? = null
+    /** The MilkDrop visualiser behind the music view (MainActivity adds and removes the view). */
+    var vizHook: ((Boolean) -> Unit)? = null
+    var vizStep: ((Int) -> Unit)? = null
+    private var vizOn = false
+    fun vizLive(on: Boolean) { np.vizLive = on; invalidate() }
+    fun vizName(n: String) = np.presetName(n)
+    val audio get() = np.audio
     init { looks.onChanged { sceneKey = ""; invalidate(); videoHook?.invoke() } }
     private val watch = WatchNext(ctx) { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); if (cards().isEmpty() && mode == Mode.CARDS) mode = Mode.DOCK; invalidate() }
 
@@ -98,6 +105,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         { mode == Mode.DOCK || mode == Mode.CARDS || mode == Mode.TOP || mode == Mode.NP })
     private val fx = AmbientFx(prefs, weather) { postInvalidateDelayed(40) }
     private val np = NowPlaying(ctx, prefs, { act.launch(it) }) { auto -> onNowPlaying(auto) }
+    init { np.onPreset = { vizStep?.invoke(it) } }
 
     /** The music changed: a new song may open the full screen view, and a card that has gone gives the remote back. */
     private fun onNowPlaying(auto: Boolean) {
@@ -307,7 +315,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         Mode.MENU -> { mode = menuFrom; invalidate(); true }
         Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, dockSlots() - 1); invalidate(); true }
         Mode.CARDS, Mode.TOP -> { mode = Mode.DOCK; invalidate(); true }
-        Mode.NP -> { if (np.ambientOpen) np.closeAmbient(true) else { np.blur(); mode = Mode.DOCK }; invalidate(); true }
+        Mode.NP -> { if (np.backPressed()) {} else if (np.ambientOpen) np.closeAmbient(true) else { np.blur(); mode = Mode.DOCK }; invalidate(); true }
         Mode.SETTINGS -> { if (!settings.back()) { mode = Mode.DOCK; fi = gearIdx(); syncPerson() }; invalidate(); true }
         Mode.POP -> { peopleUi.drop(); mode = Mode.TOP; invalidate(); true }
         Mode.KIDS -> { kids.back(); true }
@@ -755,7 +763,9 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (mode == Mode.KIDS) { kids.draw(c, width, height); return }
         if (mode == Mode.SETTINGS) { settings.draw(c, width, height); return }
         if (mode == Mode.SMART) { smart.draw(c, width, height); return }
-        if (np.ambientOpen) { np.drawAmbient(c, width, height, u); postInvalidateDelayed(100); return }
+        val wantViz = np.ambientOpen && np.vizWanted()
+        if (wantViz != vizOn) { vizOn = wantViz; if (!wantViz) np.vizLive = false; vizHook?.invoke(wantViz) }
+        if (np.ambientOpen) { np.drawAmbient(c, width, height, u); if (np.animating) postInvalidateOnAnimation() else postInvalidateDelayed(100); return }
         if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || solid) {
             c.drawColor(when { look == Look.DARK -> Color.rgb(20, 22, 29); look == Look.OLED && mode != Mode.MORE -> Color.BLACK; else -> ground })
         } else {

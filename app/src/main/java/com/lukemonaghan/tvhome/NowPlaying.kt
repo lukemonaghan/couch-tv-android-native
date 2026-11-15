@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.LinearGradient
 import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
@@ -64,6 +65,37 @@ class NowPlaying(
     var ambientOpen = false; private set
     private var ambientDismissed = false
     private var ambBtn = 1
+
+    // ---- the MilkDrop visualiser behind the music view (Visualiser.kt)
+    var vizLive = false                       // the visualiser has drawn a frame: the view leaves its own backdrop out
+    var vizName = ""                          // the preset playing now
+    var onPreset: ((Int) -> Unit)? = null     // +1 / -1: the next / previous preset (the home passes it to the visualiser)
+    val audio get() = viz
+    /** The music view can run the visualiser: the engine is in the app, presets are installed, and it is not switched off in Settings. */
+    fun vizWanted() = ProjectM.available && prefs.getBoolean("np_viz", true) && PresetStore.ready(ctx)
+    private var hidden = false                // overlays faded out, only the visualiser shows
+    private var ovFrom = 1f; private var ovTo = 1f; private var ovAt = 0L
+    private var lastKeyAt = 0L
+    private var nameAt = 0L                   // when the preset name last changed (it shows for a moment when the overlays are hidden)
+    val animating get() = vizLive && SystemClock.uptimeMillis() - maxOf(ovAt, nameAt, brightAt) < 3200L
+    private fun overlay(): Float {
+        val f = ((SystemClock.uptimeMillis() - ovAt) / 400f).coerceIn(0f, 1f)
+        return ovFrom + (ovTo - ovFrom) * f
+    }
+    private var brightAt = 0L                 // when the brightness was last changed with the keys (the slider shows for a moment)
+    private fun bright() = prefs.getInt("viz_bright", 100).coerceIn(20, 100)
+    private fun adjustBright(d: Int) { prefs.edit().putInt("viz_bright", (bright() + d).coerceIn(20, 100)).apply(); brightAt = SystemClock.uptimeMillis(); changed(false) }
+    private fun resetOv() { hidden = false; ovFrom = 1f; ovTo = 1f; ovAt = 0L; lastKeyAt = SystemClock.uptimeMillis() }
+    private fun setHidden(h: Boolean) { if (hidden == h) return; ovFrom = overlay(); hidden = h; ovTo = if (h) 0f else 1f; ovAt = SystemClock.uptimeMillis(); changed(false) }
+    fun presetName(n: String) { vizName = n; nameAt = SystemClock.uptimeMillis(); changed(false) }
+    /** Back in the music view: brings hidden overlays back first. True when that was all it did. */
+    fun backPressed(): Boolean { if (vizLive && hidden) { setHidden(false); lastKeyAt = SystemClock.uptimeMillis(); return true }; return false }
+    private fun items(): List<String> {
+        val l = arrayListOf("prev", "play", "next", "stop")
+        if (vizLive) { l.add("preset"); l.add("eye") }
+        l.add("app")
+        return l
+    }
 
     val on get() = prefs.getBoolean("np_on", true)
     val ambientOn get() = prefs.getBoolean("np_ambient", true)
@@ -125,7 +157,7 @@ class NowPlaying(
             if (lyricsOn) Lyrics.fetch(artist, title, album, (dur / 1000).toInt()) { l -> main.post { if (lastTrackKey == key) { lyr = l; lyrDone = true; changed(false) } } }
         }
         val auto = newTrack && ambientOn && !ambientDismissed
-        if (auto) { ambientOpen = true; ambBtn = 1 }
+        if (auto) { resetOv(); ambientOpen = true; ambBtn = 1 }
         changed(auto)
     }
 
@@ -169,7 +201,19 @@ class NowPlaying(
     /** A key while the card (or the full screen view) has the remote. True when it was used here; false lets the home move off the card. */
     fun key(code: Int): Boolean {
         if (ambientOpen) {
-            val n = 5
+            lastKeyAt = SystemClock.uptimeMillis()
+            if (vizLive && hidden) {   // only the visualiser shows: left and right change the preset, anything else brings the buttons back
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> onPreset?.invoke(-1)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> onPreset?.invoke(1)
+                    KeyEvent.KEYCODE_DPAD_UP -> adjustBright(10)      // up and down are a brightness slider while only the visualiser shows
+                    KeyEvent.KEYCODE_DPAD_DOWN -> adjustBright(-10)
+                    else -> setHidden(false)
+                }
+                return true
+            }
+            val n = items().size
+            ambBtn = ambBtn.coerceIn(0, n - 1)
             when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (ambBtn > 0) ambBtn--
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (ambBtn < n - 1) ambBtn++
@@ -186,24 +230,31 @@ class NowPlaying(
     }
 
     /** The full screen view cannot show now (Home settings is open): forget it without remembering a dismissal. */
-    fun abandonAmbient() { ambientOpen = false; viz.stop() }
+    fun abandonAmbient() { ambientOpen = false; viz.stop(); resetOv() }
 
     /** Opens the full screen music view if something is playing (Up from the top of the home). */
-    fun openAmbient(): Boolean { if (!visible) return false; ambientOpen = true; ambientDismissed = false; ambBtn = 1; changed(false); return true }
+    fun openAmbient(): Boolean { if (!visible) return false; resetOv(); ambientOpen = true; ambientDismissed = false; ambBtn = 1; changed(false); return true }
 
-    fun closeAmbient(dismiss: Boolean) { ambientOpen = false; viz.stop(); if (dismiss) ambientDismissed = true; focus() }
+    fun closeAmbient(dismiss: Boolean) { ambientOpen = false; viz.stop(); resetOv(); if (dismiss) ambientDismissed = true; focus() }
 
     fun press() {
         val t = track ?: return
         val tc = t.controller.transportControls
         if (ambientOpen) {
-            when (ambBtn) { 0 -> tc.skipToPrevious(); 1 -> toggle(t); 2 -> tc.skipToNext(); 3 -> { stoppedKey = "${t.title}\n${t.artist}"; stopAt = SystemClock.uptimeMillis(); tc.pause(); tc.stop()
+            lastKeyAt = SystemClock.uptimeMillis()
+            if (vizLive && hidden) { setHidden(false); return }
+            val list = items(); ambBtn = ambBtn.coerceIn(0, list.size - 1)
+            when (list[ambBtn]) { "prev" -> tc.skipToPrevious(); "play" -> toggle(t); "next" -> tc.skipToNext()
+                "preset" -> { onPreset?.invoke(1); return }
+                "eye" -> { setHidden(true); return }
+                "stop" -> { stoppedKey = "${t.title}\n${t.artist}"; stopAt = SystemClock.uptimeMillis(); tc.pause(); tc.stop()
                     // an app that ignores both still gets the remote's own Pause key
                     runCatching { for (a in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) t.controller.dispatchMediaButtonEvent(KeyEvent(a, KeyEvent.KEYCODE_MEDIA_PAUSE)) }
-                    ambientOpen = false; viz.stop(); track = null; focused = false; changed(false); main.postDelayed({ refresh() }, 700L); return }; 4 -> launch(t.pkg) }
+                    ambientOpen = false; viz.stop(); resetOv(); track = null; focused = false; changed(false); main.postDelayed({ refresh() }, 700L); return }
+                "app" -> launch(t.pkg) }
             main.postDelayed({ refresh() }, 700L); return
         }
-        ambientOpen = true; ambientDismissed = false; ambBtn = 1   // OK on the card opens the full screen music view
+        resetOv(); ambientOpen = true; ambientDismissed = false; ambBtn = 1   // OK on the card opens the full screen music view
         changed(false)
     }
 
@@ -326,6 +377,15 @@ class NowPlaying(
             "play" -> { path.moveTo(cx - s * 0.6f, cy - s); path.lineTo(cx + s, cy); path.lineTo(cx - s * 0.6f, cy + s); path.close() }
             "pause" -> { path.addRect(cx - s * 0.8f, cy - s, cx - s * 0.2f, cy + s, Path.Direction.CW); path.addRect(cx + s * 0.2f, cy - s, cx + s * 0.8f, cy + s, Path.Direction.CW) }
             "stop" -> path.addRect(cx - s * 0.8f, cy - s * 0.8f, cx + s * 0.8f, cy + s * 0.8f, Path.Direction.CW)
+            "preset" -> {   // a four-point sparkle: a new look
+                path.moveTo(cx, cy - s * 1.1f); path.quadTo(cx + s * 0.15f, cy - s * 0.15f, cx + s * 1.1f, cy); path.quadTo(cx + s * 0.15f, cy + s * 0.15f, cx, cy + s * 1.1f)
+                path.quadTo(cx - s * 0.15f, cy + s * 0.15f, cx - s * 1.1f, cy); path.quadTo(cx - s * 0.15f, cy - s * 0.15f, cx, cy - s * 1.1f); path.close()
+            }
+            "eye" -> {   // hide the buttons: an eye
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = s * 0.22f; paint.strokeCap = Paint.Cap.ROUND
+                path.moveTo(cx - s * 1.15f, cy); path.quadTo(cx, cy - s * 1.2f, cx + s * 1.15f, cy); path.quadTo(cx, cy + s * 1.2f, cx - s * 1.15f, cy)
+                path.addCircle(cx, cy, s * 0.38f, Path.Direction.CW)
+            }
             "prev" -> { path.addRect(cx - s, cy - s * 0.9f, cx - s * 0.7f, cy + s * 0.9f, Path.Direction.CW)
                 path.moveTo(cx + s, cy - s * 0.9f); path.lineTo(cx - s * 0.6f, cy); path.lineTo(cx + s, cy + s * 0.9f); path.close() }
             "next" -> { path.addRect(cx + s * 0.7f, cy - s * 0.9f, cx + s, cy + s * 0.9f, Path.Direction.CW)
@@ -348,7 +408,23 @@ class NowPlaying(
     /** The music view over the whole home: a glow from the cover, the cover on a record, the words, a bar and four buttons. */
     fun drawAmbient(c: Canvas, w: Int, h: Int, u: Float) {
         val t = track ?: return
+        val ov = if (vizLive) overlay() else 1f
+        if (vizLive) {
+            // the visualiser shows through: a soft dark wash keeps the words readable, and goes with the overlays
+            if (lastKeyAt != 0L && !hidden && ov >= 1f) {
+                val secs = prefs.getInt("viz_autohide", 0)
+                if (secs > 0 && SystemClock.uptimeMillis() - lastKeyAt > secs * 1000L) setHidden(true)
+            }
+            paint.style = Paint.Style.FILL; paint.color = Color.BLACK; paint.alpha = 255   // a shader is drawn at the paint's own alpha: leftovers from the last frame would thin the wash
+            paint.shader = LinearGradient(0f, h * 0.25f, 0f, h.toFloat(), 0x00000000, Color.argb((0.62f * ov * 255).toInt(), 0, 0, 0), Shader.TileMode.CLAMP)
+            c.drawRect(0f, h * 0.25f, w.toFloat(), h.toFloat(), paint)
+            paint.shader = null
+            val b = bright()
+            if (b < 100) { paint.color = Color.argb(((100 - b) * 255 / 100), 0, 0, 0); c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint) }   // the brightness setting: a black veil over the visualiser
+        }
+        val layer = if (vizLive && ov < 1f) c.saveLayerAlpha(0f, 0f, w.toFloat(), h.toFloat(), (ov * 255).toInt()) else -1
         // the backdrop: couch-tv's dark radial wash, with two colour glows that breathe over eight seconds
+        if (!vizLive) {
         paint.style = Paint.Style.FILL
         paint.shader = RadialGradient(w / 2f, h / 2f, w * 0.7f, Color.rgb(14, 12, 20), Color.rgb(6, 6, 10), Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
@@ -361,10 +437,17 @@ class NowPlaying(
             ArtBlur.fill(c, b, rect, paint)
             paint.color = Color.argb(120, 0, 0, 0); c.drawRect(rect, paint)
         }
+        }
 
+        if (vizLive && ov <= 0.01f) { c.restoreToCount(layer.takeIf { it >= 0 } ?: c.saveCount); toast(c, w, h, u); if (t.playing) viz.start() else viz.stop(); return }
         val artS = 400 * u; val gap = 80 * u; val metaW = 640 * u
         val left = (w - (artS + gap + metaW)) / 2f
         val top = (h - artS) / 2f - 110 * u   // lifted by a third of the space above, so the lyrics have room below
+        if (vizLive) {   // a half-clear dark card behind the cover, words and buttons so they read on any preset
+            paint.style = Paint.Style.FILL; paint.color = Color.argb(128, 0, 0, 0); paint.shader = null
+            rect.set(left - 48 * u, top - 48 * u, left + artS + gap + metaW + 48 * u, top + artS + 64 * u)
+            c.drawRoundRect(rect, 44 * u, 44 * u, paint)
+        }
         // the record behind the cover, peeking out on the right
         val vr = 184 * u
         val vcx = left + artS + 48 * u - vr; val vcy = top + 16 * u + vr
@@ -395,17 +478,17 @@ class NowPlaying(
         // the equaliser: the real spectrum of what is playing, across the whole width (a gentle pattern when the TV does not allow it)
         val now = SystemClock.uptimeMillis()
         if (t.playing) viz.start() else viz.stop()
-        val n = AudioViz.BANDS; val eqH = 52 * u
+        val n = AudioViz.BANDS; val eqH = if (vizLive) 0f else 52 * u
         val slot = metaW / n; val bw = slot * 0.62f
         paint.color = Color.argb(150, 255, 255, 255)
-        for (i in 0 until n) {
+        if (!vizLive) for (i in 0 until n) {
             val lv = if (viz.live) viz.bands[i] else if (t.playing) (0.18f + 0.5f * (0.5f + 0.5f * sin(now / 260.0 + i * 0.7)).toFloat() * (0.5f + 0.5f * sin(now / 900.0 + i * 0.3)).toFloat()) else 0.06f
             val hh = (eqH * lv.coerceIn(0.05f, 1f))
             val bx0 = mx + i * slot
             rect.set(bx0, y + eqH - hh, bx0 + bw, y + eqH)
             c.drawRoundRect(rect, bw / 2, bw / 2, paint)
         }
-        y += eqH + 24 * u
+        y += if (vizLive) 0f else eqH + 24 * u
         // progress: elapsed, a bar, total (the position is the last read plus the time since)
         val pos = if (t.playing) t.position + (now - lastReadAt()) else t.position
         text.textSize = 18 * u; text.color = Color.argb(179, 255, 255, 255)
@@ -419,7 +502,8 @@ class NowPlaying(
         y += 14 * u + 32 * u
         // buttons: previous, play or pause (bigger), next, and the app's name
         var bx = mx
-        val kinds = listOf("prev", if (t.playing) "pause" else "play", "next", "stop")
+        val all = items()
+        val kinds = all.dropLast(1).map { if (it == "play") (if (t.playing) "pause" else "play") else it }
         for ((i, k) in kinds.withIndex()) {
             val r = (if (i == 1) 40 else 34) * u
             val f = ambBtn == i
@@ -434,7 +518,7 @@ class NowPlaying(
         val open = t.app
         text.typeface = Fonts.semibold(ctx); text.textSize = 18 * u
         val ow = text.measureText(open) + 48 * u
-        val f = ambBtn == 4
+        val f = ambBtn == all.size - 1
         rect.set(bx, y + 40 * u - 34 * u, bx + ow, y + 40 * u + 34 * u)
         paint.color = if (f) Color.WHITE else Color.argb(26, 255, 255, 255)
         c.drawRoundRect(rect, 34 * u, 34 * u, paint)
@@ -442,8 +526,39 @@ class NowPlaying(
         c.drawText(open, bx + 24 * u, y + 46 * u, text)
         text.color = Color.argb(140, 255, 255, 255); text.textSize = 18 * u
         c.drawText("▼ Press Down or Back for apps", mx, y + 120 * u, text)
+        if (vizLive && vizName.isNotEmpty()) { text.textSize = 16 * u; text.color = Color.argb(110, 255, 255, 255); c.drawText("Preset: " + TextUtils.ellipsize(vizName, text, metaW, TextUtils.TruncateAt.END), mx, y + 148 * u, text) }
+        else if (!vizLive && ProjectM.available && prefs.getBoolean("np_viz", true) && !PresetStore.ready(ctx)) { text.textSize = 16 * u; text.color = Color.argb(110, 255, 255, 255); c.drawText("Music visualiser: get presets in Settings", mx, y + 148 * u, text) }
         if (lyricsOn) drawLyrics(c, w, h, u, pos)
         text.color = Color.WHITE
+        if (layer >= 0) c.restoreToCount(layer)
+        if (vizLive) toast(c, w, h, u)
+    }
+
+    /** With the overlays hidden, the preset's name shows bottom left for a few seconds after it changes. */
+    private fun toast(c: Canvas, w: Int, h: Int, u: Float) {
+        if (!vizLive) return
+        val bAge = SystemClock.uptimeMillis() - brightAt
+        if (brightAt != 0L && bAge < 2200L) {   // the brightness slider, bottom centre
+            val a = if (bAge > 1700L) (2200L - bAge) / 500f else 1f
+            val tw = 420 * u; val x0 = (w - tw) / 2f; val y0 = h - 120 * u
+            paint.style = Paint.Style.FILL; paint.shader = null
+            rect.set(x0 - 34 * u, y0 - 62 * u, x0 + tw + 34 * u, y0 + 34 * u); paint.color = Color.argb((140 * a).toInt(), 0, 0, 0); c.drawRoundRect(rect, 34 * u, 34 * u, paint)
+            rect.set(x0, y0 - 6 * u, x0 + tw, y0 + 6 * u); paint.color = Color.argb((70 * a).toInt(), 255, 255, 255); c.drawRoundRect(rect, 6 * u, 6 * u, paint)
+            val f = (bright() - 20) / 80f
+            rect.set(x0, y0 - 6 * u, x0 + tw * f, y0 + 6 * u); paint.color = Color.argb((255 * a).toInt(), 255, 255, 255); c.drawRoundRect(rect, 6 * u, 6 * u, paint)
+            c.drawCircle(x0 + tw * f, y0, 12 * u, paint)
+            text.typeface = Fonts.semibold(ctx); text.textSize = 22 * u; text.textAlign = Paint.Align.CENTER; text.color = Color.argb((235 * a).toInt(), 255, 255, 255)
+            c.drawText("Brightness ${bright()}%", w / 2f, y0 - 24 * u, text); text.textAlign = Paint.Align.LEFT
+        }
+        if (vizName.isEmpty()) return
+        val age = SystemClock.uptimeMillis() - nameAt
+        if (!hidden || age > 3000L) return
+        val a = if (age > 2400L) (3000L - age) / 600f else if (age < 300L) age / 300f else 1f
+        text.typeface = Fonts.regular(ctx); text.textSize = 22 * u; text.textAlign = Paint.Align.LEFT
+        text.color = Color.argb((190 * a).toInt(), 255, 255, 255)
+        text.setShadowLayer(6 * u, 0f, 0f, Color.argb((200 * a).toInt(), 0, 0, 0))
+        c.drawText(TextUtils.ellipsize(vizName, text, w - 160 * u, TextUtils.TruncateAt.END), 0, TextUtils.ellipsize(vizName, text, w - 160 * u, TextUtils.TruncateAt.END).length, 80 * u, h - 70 * u, text)
+        text.clearShadowLayer()
     }
 
     /** Three lines of the synced lyrics along the bottom: the one before, the one being sung, the next. */

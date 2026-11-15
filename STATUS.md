@@ -66,3 +66,10 @@ Seeded prefs by writing `shared_prefs/home.xml` (script idea: push XML to /data/
 - Kids mode poster/app rings and the people pill focus ring are strokes now (were solid white discs). Checked on the emulator.
 - Still unchecked on screen: Smart home, Doorbell, Updater, Now playing, soundscape audio, Smart Idle, Input menu with real inputs, moving tiles, weather fx, video background, own photos, First-run prompt.
 - Still to do: compare new features with the Playwright reference, language support, real-TV memory check (needs the user's yes), close Bedroom TV USB debugging.
+
+## Music visualiser (2026-11-16)
+- MilkDrop presets behind the music view, played by projectM built for **OpenGL ES 2.0** (the Bedroom and Kogan TVs have a Mali-470, ES 2.0 only). Spike on the Bedroom TV: no failed loads, no GL errors; at 960x540 about two thirds of 36 sampled favourites ran at 25 fps or more, a sixth under 14 fps.
+- Code: `ProjectM.kt` (JNI), `Visualiser.kt` (GLSurfaceView behind the home, added by `MainActivity` only while the music view is open), `PresetStore.kt` (index, per-file downloads, textures zip, remove), `VizSettings.kt` (Settings, Music visualiser: options and a Category > Group > preset browser), `NowPlaying.kt` (half-clear card, eye button hides everything, brightness slider on up/down while hidden, sparkle button = next preset).
+- Presets that run under 14 fps, fail, or crash the app are put on a skip list (`viz_slow`) and not played again on that TV.
+- Native libraries: `tools/build-native.sh` (armeabi-v7a, arm64-v8a, x86). Not committed. `tools/make-preset-index.py` makes the preset list.
+- Not done yet: favourites you can mark in the app (the 64 starter presets are a fixed list), brightness above 100%, a first-run prompt, checking the arm64 build on a real TV.

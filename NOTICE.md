@@ -40,3 +40,13 @@ private to the machine they were made on.
 - Scene art: the five scenes (night, golden, water, fog, dawn), their cut-outs and glass copies come from couch-tv (generated for that project, free to use per its CREDITS.md).
 - Classic look photos (tessellated-pavement, grose-valley, albury-storm, aresquiers-beach, vang-vieng-sunset) are from Wikimedia Commons under Creative Commons licences (CC BY-SA 2.5, 3.0, 4.0 and CC BY 4.0), as listed in couch-tv's `tv-home/web/backgrounds/CREDITS.md`: JJ Harrison, Diliff, Thennicke, Christian Ferrer and Basile Morin. The home shows each place and photographer under the clock.
 - `tools/tvadb.py` is couch-tv's pure Python ADB client (MIT), unchanged.
+
+## Music visualiser (third-party, not copied into this repository)
+
+| What | Licence | How it is used |
+|---|---|---|
+| [projectM](https://github.com/projectM-visualizer/projectm), the MilkDrop player | LGPL-2.1 | Built by `tools/build-native.sh` from the OpenGL ES 2.0 fork [bbangert/projectm](https://github.com/bbangert/projectm) (branch `up-es2`, pinned commit in the script) as a separate `libprojectM-4.so` in the app. Not linked statically, so it can be swapped for another build. Its source is at the address above. |
+| [presets-cream-of-the-crop](https://github.com/projectM-visualizer/presets-cream-of-the-crop) | see the repository's `LICENSE.md` | Nothing is bundled. The user picks presets in Settings and the app downloads them from GitHub (pinned commit in `PresetStore.kt`) into its own storage. `app/src/main/assets/presets/index.tsv` lists the file names and sizes only. |
+| [presets-milkdrop-texture-pack](https://github.com/projectM-visualizer/presets-milkdrop-texture-pack) | see the repository | Downloaded the same way, on request. |
+
+`app/src/main/jniLibs/` is not committed: run `tools/build-native.sh` (it needs the Android NDK). Without those libraries the app builds and runs, and the music view keeps its blurred cover.

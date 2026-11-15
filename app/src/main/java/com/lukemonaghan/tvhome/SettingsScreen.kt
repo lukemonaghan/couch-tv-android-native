@@ -30,7 +30,7 @@ class SettingsScreen(
     private val lookSet by lazy { LookSettings(ctx, prefs, act, changed) }
     private fun LookRow.row() = Row(title, note, value, check, header, null, press)
 
-    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "Idle and sound", "Smart home", "Updates", "About")
+    private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "Idle and sound", "Music visualiser", "Smart home", "Updates", "About")
     private var page = 0
     private var inRows = false
     private var row = 0
@@ -39,13 +39,17 @@ class SettingsScreen(
     private val quickSys by lazy { QuickSystem(ctx, prefs) }
     private var results: List<Weather.Place>? = null   // the place search answer, shown on the Location page
 
-    fun open() { page = 0; inRows = false; row = 0; scroll = 0; results = null; peopleSettings.reset() }
+    fun open() {
+        page = 0; inRows = false; row = 0; scroll = 0; results = null; peopleSettings.reset()
+        VizSettings.reset(); VizSettings.onNavigate = { row = 0; scroll = 0 }; PresetStore.onChange = { changed() }
+    }
 
     /** Back: one step out. False when the screen should close. */
     fun back(): Boolean {
         if (lift != null) { lift = null; return true }
         if (results != null) { results = null; row = 0; return true }
         if (pages[page] == "People" && peopleSettings.back()) return true
+        if (pages[page] == "Music visualiser" && VizSettings.back()) return true
         if (inRows) { inRows = false; return true }
         return false
     }
@@ -145,6 +149,7 @@ class SettingsScreen(
         "Smart home" -> PlatformPages.smart(ctx).map(::pr)
         "Updates" -> PlatformPages.updates(ctx).map(::pr)
         "Idle and sound" -> IdleSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.press) }
+        "Music visualiser" -> VizSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.press) }
         else -> PlatformPages.aboutTop(ctx).map(::pr) + listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
             Row("Android settings", "Wi-Fi, display, accounts and the rest") { act.openSettings() },
@@ -299,6 +304,10 @@ class SettingsScreen(
                 c.drawLine(cx - 12 * k, cy - 1 * k, cx, cy - 11 * k, paint); c.drawLine(cx, cy - 11 * k, cx + 12 * k, cy - 1 * k, paint)
                 c.drawLine(cx - 8 * k, cy - 4 * k, cx - 8 * k, cy + 11 * k, paint); c.drawLine(cx + 8 * k, cy - 4 * k, cx + 8 * k, cy + 11 * k, paint)
                 c.drawLine(cx - 8 * k, cy + 11 * k, cx + 8 * k, cy + 11 * k, paint)
+                paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT; return
+            }
+            "Music visualiser" -> {   // equaliser bars
+                for ((n, hh) in intArrayOf(7, 14, 10, 17, 8).withIndex()) { val x = cx - 12 * k + n * 6 * k; c.drawLine(x, cy + 9 * k, x, cy + 9 * k - hh * k, paint) }
                 paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT; return
             }
             "Updates" -> {   // an arrow up out of a tray

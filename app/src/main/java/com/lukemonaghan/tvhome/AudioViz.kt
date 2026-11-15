@@ -16,6 +16,9 @@ import kotlin.math.pow
 class AudioViz(private val ctx: Context) {
     val bands = FloatArray(BANDS)
     @Volatile var live = false; private set
+    /** The latest 8-bit waveform of the output mix, and a counter that goes up with every new one (for the MilkDrop visualiser). */
+    @Volatile var wave: ByteArray? = null; private set
+    @Volatile var waveSeq = 0; private set
     private var viz: Visualizer? = null
     private var edges: IntArray? = null
 
@@ -32,9 +35,9 @@ class AudioViz(private val ctx: Context) {
             for (i in 1..BANDS) if (e[i] <= e[i - 1]) e[i] = (e[i - 1] + 1).coerceAtMost(n)
             edges = e
             v.setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
-                override fun onWaveFormDataCapture(vis: Visualizer?, wave: ByteArray?, rate: Int) {}
+                override fun onWaveFormDataCapture(vis: Visualizer?, w: ByteArray?, rate: Int) { if (w != null) { wave = w.copyOf(); waveSeq++ } }
                 override fun onFftDataCapture(vis: Visualizer?, fft: ByteArray?, rate: Int) { if (fft != null) take(fft) }
-            }, Visualizer.getMaxCaptureRate() / 2, false, true)
+            }, Visualizer.getMaxCaptureRate(), true, true)
             v.enabled = true
             viz = v; live = true
         }.onFailure { stop() }
@@ -59,7 +62,7 @@ class AudioViz(private val ctx: Context) {
 
     fun stop() {
         runCatching { viz?.enabled = false; viz?.release() }
-        viz = null; live = false
+        viz = null; live = false; wave = null
         java.util.Arrays.fill(bands, 0f)
     }
 

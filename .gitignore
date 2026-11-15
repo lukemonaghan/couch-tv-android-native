@@ -14,3 +14,6 @@ config.json
 
 # per-TV records written by tools/install.sh
 tools/.previous-home.*
+
+# built by tools/build-native.sh
+app/src/main/jniLibs/
