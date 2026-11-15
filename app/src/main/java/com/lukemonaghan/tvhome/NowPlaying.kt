@@ -67,7 +67,10 @@ class NowPlaying(
     private var ambBtn = 1
 
     // ---- the MilkDrop visualiser behind the music view (Visualiser.kt)
-    var vizLive = false                       // the visualiser has drawn a frame: the view leaves its own backdrop out
+    /** The visualiser has drawn a frame: the view leaves its own backdrop out. Its buttons join the row, so the focus follows its button by name. */
+    var vizLive = false
+        set(v) { if (field != v) { val name = items().getOrNull(ambBtn); field = v; ambBtn = items().indexOf(name).takeIf { it >= 0 } ?: playIdx() } }
+    private fun playIdx() = items().indexOf("play")
     var vizName = ""                          // the preset playing now
     var onPreset: ((Int) -> Unit)? = null     // +1 / -1: the next / previous preset (the home passes it to the visualiser)
     val audio get() = viz
@@ -92,9 +95,9 @@ class NowPlaying(
     /** Back in the music view: brings hidden overlays back first. True when that was all it did. */
     fun backPressed(): Boolean { if (vizLive && hidden) { setHidden(false); lastKeyAt = SystemClock.uptimeMillis(); return true }; return false }
     private fun items(): List<String> {
-        val l = arrayListOf("prev", "play", "next", "stop")
-        if (vizLive) { l.add("preset"); l.add("eye") }
-        l.add("app")
+        val l = ArrayList<String>()
+        if (vizLive) { l.add("eye"); l.add("preset") }
+        l.addAll(listOf("prev", "play", "next", "stop", "app"))
         return l
     }
 
@@ -158,7 +161,7 @@ class NowPlaying(
             if (lyricsOn) Lyrics.fetch(artist, title, album, (dur / 1000).toInt()) { l -> main.post { if (lastTrackKey == key) { lyr = l; lyrDone = true; changed(false) } } }
         }
         val auto = newTrack && ambientOn && !ambientDismissed
-        if (auto) { resetOv(); ambientOpen = true; ambBtn = 1 }
+        if (auto) { resetOv(); ambientOpen = true; ambBtn = playIdx() }
         changed(auto)
     }
 
@@ -234,7 +237,7 @@ class NowPlaying(
     fun abandonAmbient() { ambientOpen = false; viz.stop(); resetOv() }
 
     /** Opens the full screen music view if something is playing (Up from the top of the home). */
-    fun openAmbient(): Boolean { if (!visible) return false; resetOv(); ambientOpen = true; ambientDismissed = false; ambBtn = 1; changed(false); return true }
+    fun openAmbient(): Boolean { if (!visible) return false; resetOv(); ambientOpen = true; ambientDismissed = false; ambBtn = playIdx(); changed(false); return true }
 
     fun closeAmbient(dismiss: Boolean) { ambientOpen = false; viz.stop(); resetOv(); if (dismiss) ambientDismissed = true; focus() }
 
@@ -255,7 +258,7 @@ class NowPlaying(
                 "app" -> launch(t.pkg) }
             main.postDelayed({ refresh() }, 700L); return
         }
-        resetOv(); ambientOpen = true; ambientDismissed = false; ambBtn = 1   // OK on the card opens the full screen music view
+        resetOv(); ambientOpen = true; ambientDismissed = false; ambBtn = playIdx()   // OK on the card opens the full screen music view
         changed(false)
     }
 
@@ -504,49 +507,52 @@ class NowPlaying(
         if (frac > 0f) { rect.set(barL, barY - 5 * u, barL + (barR - barL) * frac, barY + 5 * u); paint.color = Color.WHITE; c.drawRoundRect(rect, 5 * u, 5 * u, paint) }
         if (t.duration > 0) { text.textAlign = Paint.Align.RIGHT; text.color = Color.argb(179, 255, 255, 255); c.drawText(fmt(t.duration), w - m - 10 * u, barY + 7 * u, text); text.textAlign = Paint.Align.LEFT }
 
-        // buttons: previous, play or pause (bigger), next, stop, ..., and the app's name, centred under the bar
+        // buttons: play or pause (bigger) exactly in the middle with previous and next beside it; the eye and next-preset on the left
+        // with the preset's name after them; the stop button and the app's name on the right with the hint before them
         val all = items()
-        val kinds = all.dropLast(1).map { if (it == "play") (if (t.playing) "pause" else "play") else it }
         text.typeface = Fonts.semibold(ctx); text.textSize = 18 * u
         val ow = text.measureText(t.app) + 48 * u
-        var total = ow
-        for (i in kinds.indices) total += 2 * (if (i == 1) 40 else 34) * u + 24 * u
-        var bx = (w - total) / 2f
-        val btnLeft = bx
-        for ((i, k) in kinds.withIndex()) {
-            val r = (if (i == 1) 40 else 34) * u
-            val f = ambBtn == i
-            val cx = bx + r; val cy = btnY
+        val rS = 34 * u; val rP = 40 * u; val gap = 24 * u
+        fun round(name: String, cx: Float, r: Float) {
+            val f = ambBtn == all.indexOf(name)
+            val cy = btnY
             c.save(); if (f) { c.translate(cx, cy); c.scale(1.12f, 1.12f); c.translate(-cx, -cy) }
-            paint.color = if (f) Color.WHITE else Color.argb(if (i == 1) 51 else 26, 255, 255, 255)
+            paint.color = if (f) Color.WHITE else Color.argb(if (name == "play") 51 else 26, 255, 255, 255)
             c.drawCircle(cx, cy, r, paint)
-            glyph(c, cx, cy, r * 0.5f, k, if (f) Color.rgb(10, 10, 15) else Color.WHITE)
+            glyph(c, cx, cy, r * 0.5f, if (name == "play" && t.playing) "pause" else name, if (f) Color.rgb(10, 10, 15) else Color.WHITE)
             c.restore()
-            bx += 2 * r + 24 * u
         }
-        val f = ambBtn == all.size - 1
-        rect.set(bx, btnY - 34 * u, bx + ow, btnY + 34 * u)
-        paint.color = if (f) Color.WHITE else Color.argb(26, 255, 255, 255)
-        c.drawRoundRect(rect, 34 * u, 34 * u, paint)
-        text.color = if (f) Color.rgb(10, 10, 15) else Color.WHITE
-        c.drawText(t.app, bx + 24 * u, btnY + 6 * u, text)
-        // preset name bottom left (left aligned), down hint bottom right (right aligned), same height
+        val playX = w / 2f
+        val prevX = playX - rP - gap - rS; val nextX = playX + rP + gap + rS
+        round("prev", prevX, rS); round("play", playX, rP); round("next", nextX, rS)
+        val appL = w - m - ow
+        val stopX = appL - gap - rS
+        round("stop", stopX, rS)
+        val fApp = ambBtn == all.size - 1
+        rect.set(appL, btnY - rS, appL + ow, btnY + rS)
+        paint.color = if (fApp) Color.WHITE else Color.argb(26, 255, 255, 255)
+        c.drawRoundRect(rect, rS, rS, paint)
+        text.color = if (fApp) Color.rgb(10, 10, 15) else Color.WHITE
+        c.drawText(t.app, appL + 24 * u, btnY + 6 * u, text)
+        var leftEnd = m
+        if (vizLive) {
+            round("eye", m + rS, rS); round("preset", m + rS * 3 + gap, rS)
+            leftEnd = m + rS * 4 + gap + gap
+        }
         val hy = btnY + 6 * u
-        val sideW = btnLeft - m - 24 * u
         text.typeface = Fonts.regular(ctx)
         val line2 = if (vizLive && vizName.isNotEmpty()) "Preset: $vizName"
             else if (!vizLive && ProjectM.available && prefs.getBoolean("np_viz", true) && !PresetStore.ready(ctx)) "Music visualiser: get presets in Settings" else ""
         text.textAlign = Paint.Align.LEFT
         if (line2.isNotEmpty()) {
             text.textSize = 18 * u; text.color = Color.argb(150, 255, 255, 255)
-            val l2 = TextUtils.ellipsize(line2, text, sideW, TextUtils.TruncateAt.END)
-            c.drawText(l2, 0, l2.length, m, hy, text)
+            val l2 = TextUtils.ellipsize(line2, text, prevX - rS - gap - leftEnd, TextUtils.TruncateAt.END)
+            c.drawText(l2, 0, l2.length, leftEnd, hy, text)
         }
         text.textAlign = Paint.Align.RIGHT
         text.textSize = 18 * u; text.color = Color.argb(150, 255, 255, 255)
-        val zoneL = bx + ow + 30 * u
-        val hint = TextUtils.ellipsize("▼ Press Down or Back for apps", text, w - m - zoneL, TextUtils.TruncateAt.END)
-        c.drawText(hint, 0, hint.length, w - m, hy, text)
+        val hint = TextUtils.ellipsize("▼ Press Down or Back for apps", text, stopX - rS - gap - (nextX + rS + gap), TextUtils.TruncateAt.END)
+        c.drawText(hint, 0, hint.length, stopX - rS - gap, hy, text)
         text.textAlign = Paint.Align.LEFT
         if (lyricsOn && !keepLyr) drawLyrics(c, w, h, u, pos)
         text.color = Color.WHITE

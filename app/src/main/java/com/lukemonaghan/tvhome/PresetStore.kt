@@ -84,6 +84,18 @@ object PresetStore {
     /** The music view can show the visualiser: the engine is in the app, the textures and at least one preset are installed. */
     fun ready(ctx: Context) = ProjectM.available && texturesInstalled(ctx) && installed(ctx).isNotEmpty()
 
+    // ------------------------------------------------------------------ favourites and turned-off presets (prefs "home": viz_fav, viz_off)
+
+    fun favs(p: android.content.SharedPreferences): Set<String> = p.getStringSet("viz_fav", emptySet()) ?: emptySet()
+    fun off(p: android.content.SharedPreferences): Set<String> = p.getStringSet("viz_off", emptySet()) ?: emptySet()
+    fun setFav(p: android.content.SharedPreferences, paths: Collection<String>, on: Boolean) {
+        val n = HashSet(favs(p)); if (on) n.addAll(paths) else n.removeAll(paths.toSet()); p.edit().putStringSet("viz_fav", n).apply()
+    }
+    /** Turns presets off (never played) or back on. */
+    fun setOff(p: android.content.SharedPreferences, paths: Collection<String>, off: Boolean) {
+        val n = HashSet(off(p)); if (off) n.addAll(paths) else n.removeAll(paths.toSet()); p.edit().putStringSet("viz_off", n).apply()
+    }
+
     fun freeBytes(ctx: Context) = ctx.filesDir.usableSpace
 
     // ------------------------------------------------------------------ downloading

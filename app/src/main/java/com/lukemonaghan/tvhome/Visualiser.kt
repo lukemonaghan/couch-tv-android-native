@@ -22,7 +22,7 @@ import kotlin.math.sin
  * A preset that comes in under about 14 frames a second, fails to load, or crashes the app (noticed on the next start) goes
  * on a skip list in the "viz_slow" pref and is not played again on this TV.
  * Prefs (home): viz_q (0 fast 640x360, 1 normal 960x540, 2 sharp 1280x720), viz_fps (30 or 60), viz_secs (seconds per preset, 0 = only on a key),
- * viz_slow, viz_loading (the preset being loaded: still set on the next start means it crashed).
+ * viz_slow, viz_off (turned off in Settings), viz_fav and viz_favs_only (play only the favourites), viz_loading (the preset being loaded: still set on the next start means it crashed).
  */
 class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val audio: AudioViz, private val onFirstFrame: () -> Unit,
                  private val onPreset: (String) -> Unit) : GLSurfaceView(ctx) {
@@ -67,7 +67,10 @@ class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val
         override fun onSurfaceCreated(g: GL10?, c: EGLConfig?) {
             prefs.getString("viz_loading", null)?.let { markSlow(it); prefs.edit().remove("viz_loading").apply() }   // it did not come back last time
             val skip = slow()
-            order = PresetStore.installed(context).filter { it !in skip }.shuffled()
+            val off = PresetStore.off(prefs)
+            var pool = PresetStore.installed(context).filter { it !in skip && it !in off }
+            if (prefs.getBoolean("viz_favs_only", false)) { val f = PresetStore.favs(prefs); pool.filter { it in f }.takeIf { it.isNotEmpty() }?.let { pool = it } }
+            order = pool.shuffled()
             val r = ProjectM.init(PresetStore.textures(context).path + "/", w, h, fps, 32, 24)
             ready = r == "ok" && order.isNotEmpty()
             if (!ready) Log.w("tvhome", "visualiser not started: $r, ${order.size} presets")

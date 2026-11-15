@@ -33,6 +33,8 @@ interface HomeActions {
     fun openCard(pkg: String, intentUri: String?)
     fun uninstall(pkg: String)
     fun appInfo(pkg: String)
+    /** Settings, Music visualiser: a small live render of the preset at [path] (under filesDir/presets) in this screen rectangle, or null to remove it. */
+    fun vizPreview(path: String?, x: Int, y: Int, w: Int, h: Int)
 }
 
 /**
@@ -759,6 +761,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun drawHome(c: Canvas) {
         val u = height / 1080f
+        if (VizSettings.previewShown && mode != Mode.SETTINGS) settings.closePreview()
         if (screenOff) { if (over.drawScreenOff(c, width, height, u, android.os.SystemClock.uptimeMillis() - screenOffAt, "Press any button to wake")) postInvalidateOnAnimation(); return }
         if (mode == Mode.KIDS) { kids.draw(c, width, height); return }
         if (mode == Mode.SETTINGS) { settings.draw(c, width, height); return }

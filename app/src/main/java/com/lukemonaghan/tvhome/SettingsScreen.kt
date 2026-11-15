@@ -25,10 +25,11 @@ class SettingsScreen(
 ) {
     init { peopleSettings.onNavigate = { row = 0; scroll = 0 }; peopleSettings.redraw = { changed() } }
     private class Row(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
-                       val header: Boolean = false, val avatar: Person? = null, val press: (() -> Unit)? = null)
+                       val header: Boolean = false, val avatar: Person? = null,
+                       val preview: String? = null, val menu: List<Pair<String, () -> Unit>>? = null, val press: (() -> Unit)? = null)
 
     private val lookSet by lazy { LookSettings(ctx, prefs, act, changed) }
-    private fun LookRow.row() = Row(title, note, value, check, header, null, press)
+    private fun LookRow.row() = Row(title, note, value, check, header, null, press = press)
 
     private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "Idle and sound", "Music visualiser", "Smart home", "Updates", "About")
     private var page = 0
@@ -41,7 +42,7 @@ class SettingsScreen(
 
     fun open() {
         page = 0; inRows = false; row = 0; scroll = 0; results = null; peopleSettings.reset()
-        VizSettings.reset(); VizSettings.onNavigate = { row = 0; scroll = 0 }; PresetStore.onChange = { changed() }
+        pvKey = ""; VizSettings.reset(); VizSettings.onNavigate = { row = 0; scroll = 0 }; PresetStore.onChange = { changed() }
     }
 
     /** Back: one step out. False when the screen should close. */
@@ -135,7 +136,7 @@ class SettingsScreen(
             list += Row("OK moves an app between home, More apps and hidden", "Hold OK on an app on the home to change the order")
             list
         }
-        "People" -> peopleSettings.rows().map { r -> Row(r.title, r.note, r.value, r.check, r.header, r.avatar, r.press) }
+        "People" -> peopleSettings.rows().map { r -> Row(r.title, r.note, r.value, r.check, r.header, r.avatar, press = r.press) }
         "Quick buttons" -> {
             val on = QuickButtons.enabled(prefs)
             QuickButtons.listed(prefs).map { id ->
@@ -148,15 +149,15 @@ class SettingsScreen(
         }
         "Smart home" -> PlatformPages.smart(ctx).map(::pr)
         "Updates" -> PlatformPages.updates(ctx).map(::pr)
-        "Idle and sound" -> IdleSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.press) }
-        "Music visualiser" -> VizSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.press) }
+        "Idle and sound" -> IdleSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, press = it.press) }
+        "Music visualiser" -> VizSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.preview, it.menu, it.press) }
         else -> PlatformPages.aboutTop(ctx).map(::pr) + listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
             Row("Android settings", "Wi-Fi, display, accounts and the rest") { act.openSettings() },
         ) + PlatformPages.aboutBottom(prefs, store) { changed() }.map(::pr)
     }
 
-    private fun pr(p: PlatformPages.PRow) = Row(p.title, p.note, p.value, p.check, p.header, null, p.press)
+    private fun pr(p: PlatformPages.PRow) = Row(p.title, p.note, p.value, p.check, p.header, null, press = p.press)
 
     // ------------------------------------------------------------------ keys
 
@@ -191,12 +192,45 @@ class SettingsScreen(
             KeyEvent.KEYCODE_DPAD_RIGHT -> if (!inRows) { inRows = true; row = 0 }
             KeyEvent.KEYCODE_DPAD_LEFT -> if (inRows) back()
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                if (!inRows) { inRows = true; row = 0 } else list.getOrNull(row)?.press?.invoke()
+                if (!inRows) { inRows = true; row = 0 } else list.getOrNull(row)?.let { r -> if (r.menu != null) openMenu(r.menu) else r.press?.invoke() }
             }
             else -> return false
         }
         changed()
         return true
+    }
+
+    /** OK on a preset: its choices in a small list at the row. */
+    private fun openMenu(items: List<Pair<String, () -> Unit>>) {
+        val u = ctx.resources.displayMetrics.heightPixels / 1080f
+        val y = 190 * u + (row - scroll) * 86 * u
+        val low = y > ctx.resources.displayMetrics.heightPixels * 0.55f
+        ListMenu.show(ctx, 1390 * u, if (low) y else y + 78 * u, items.map { it.first }, 0, low) { i -> items[i].second(); changed() }
+    }
+
+    // ------------------------------------------------------------------ the live preview
+
+    private var pvKey = ""
+    private fun syncPreview(play: String?, u: Float) {
+        val k = play ?: ""
+        if (k == pvKey) return
+        pvKey = k
+        VizSettings.previewShown = play != null
+        act.vizPreview(play, (1440 * u).toInt(), (190 * u).toInt(), (400 * u).toInt(), (225 * u).toInt())
+    }
+
+    /** Settings left, or a row without a picture: the preview goes away. */
+    fun closePreview() { pvKey = ""; VizSettings.previewShown = false; act.vizPreview(null, 0, 0, 0, 0) }
+
+    private fun wrap(t: String, max: Float, lines: Int): List<String> {
+        val out = ArrayList<String>(); var rest = t
+        while (rest.isNotEmpty() && out.size < lines) {
+            var n = text.breakText(rest, true, max, null)
+            if (n < rest.length) { val sp = rest.lastIndexOf(' ', n); if (sp > n / 2) n = sp }
+            if (out.size == lines - 1 && n < rest.length) { out += TextUtils.ellipsize(rest, text, max, TextUtils.TruncateAt.END).toString(); break }
+            out += rest.substring(0, n).trim(); rest = rest.substring(n).trim()
+        }
+        return out
     }
 
     // ------------------------------------------------------------------ drawing
@@ -236,6 +270,8 @@ class SettingsScreen(
         text.typeface = Fonts.semibold(ctx); text.color = Color.WHITE; text.textSize = 38 * u
         c.drawText(if (results != null) "Pick a place" else if (pages[page] == "People") peopleSettings.title() else pages[page], 748 * u, 140 * u, text)
         val list = rows()
+        val showPanel = pages[page] == "Music visualiser" && list.any { it.preview != null }
+        val R = (if (showPanel) 1400 else 1840) * u   // right edge of the rows
         val rh = 78 * u; val gap = 8 * u
         val top = 190 * u
         val fit = ((h - top - 110 * u) / (rh + gap)).toInt().coerceAtLeast(1)
@@ -252,7 +288,7 @@ class SettingsScreen(
                 c.drawText(rw.title, 746 * u, y + 52 * u, text); text.letterSpacing = 0f
                 continue
             }
-            rect.set(720 * u, y, 1840 * u, y + rh)
+            rect.set(720 * u, y, R, y + rh)
             paint.style = Paint.Style.FILL
             paint.color = if (focus) Color.WHITE else Color.argb(24, 255, 255, 255)
             c.drawRoundRect(rect, 18 * u, 18 * u, paint)
@@ -260,7 +296,10 @@ class SettingsScreen(
             text.typeface = Fonts.semibold(ctx); text.color = fg; text.textSize = 29 * u
             val tx = if (rw.avatar != null) 746 * u + 64 * u else 746 * u
             if (rw.avatar != null) peopleSettings.ui.avatar(c, 746 * u + 24 * u, y + rh / 2, 24 * u, rw.avatar, u)
-            val avail = 1840 * u - 720 * u - 60 * u - (if (rw.avatar != null) 64 * u else 0f) - (if (rw.value.isNotEmpty() || rw.check != null) 260 * u else 0f)
+            text.typeface = Fonts.medium(ctx); text.textSize = 27 * u
+            val vw = if (rw.value.isNotEmpty()) minOf(380 * u, text.measureText(rw.value)) + 30 * u else 0f
+            text.typeface = Fonts.semibold(ctx); text.textSize = 29 * u
+            val avail = R - 720 * u - 60 * u - (if (rw.avatar != null) 64 * u else 0f) - vw - (if (rw.check != null) 56 * u else 0f)
             val t = TextUtils.ellipsize(rw.title, text, avail, TextUtils.TruncateAt.END)
             val twoLines = rw.note.isNotEmpty()
             c.drawText(t, 0, t.length, tx, y + (if (twoLines) 35 else 48) * u, text)
@@ -274,22 +313,51 @@ class SettingsScreen(
                 text.typeface = Fonts.medium(ctx); text.textSize = 27 * u; text.textAlign = Paint.Align.RIGHT
                 text.color = if (focus) Color.argb(170, 17, 17, 17) else Color.argb(150, 255, 255, 255)
                 val v = TextUtils.ellipsize(rw.value, text, 380 * u, TextUtils.TruncateAt.END)
-                c.drawText(v, 0, v.length, 1810 * u, y + 48 * u, text)
+                c.drawText(v, 0, v.length, R - 30 * u - (if (rw.check != null) 52 * u else 0f), y + 48 * u, text)
                 text.textAlign = Paint.Align.LEFT
             }
             if (rw.check == true) {
                 paint.color = Color.rgb(48, 209, 88)
-                c.drawCircle(1796 * u, y + rh / 2, 17 * u, paint)
+                val kx = R - 44 * u
+                c.drawCircle(kx, y + rh / 2, 17 * u, paint)
                 paint.style = Paint.Style.STROKE; paint.strokeWidth = 3.4f * u; paint.color = Color.WHITE; paint.strokeCap = Paint.Cap.ROUND
-                c.drawLine(1787 * u, y + rh / 2, 1794 * u, y + rh / 2 + 7 * u, paint)
-                c.drawLine(1794 * u, y + rh / 2 + 7 * u, 1806 * u, y + rh / 2 - 7 * u, paint)
+                c.drawLine(kx - 9 * u, y + rh / 2, kx - 2 * u, y + rh / 2 + 7 * u, paint)
+                c.drawLine(kx - 2 * u, y + rh / 2 + 7 * u, kx + 10 * u, y + rh / 2 - 7 * u, paint)
                 paint.style = Paint.Style.FILL
             } else if (rw.check == false) {
                 paint.style = Paint.Style.STROKE; paint.strokeWidth = 2.5f * u; paint.color = if (focus) Color.argb(120, 0, 0, 0) else Color.argb(110, 255, 255, 255)
-                c.drawCircle(1796 * u, y + rh / 2, 16 * u, paint)
+                c.drawCircle(R - 44 * u, y + rh / 2, 16 * u, paint)
                 paint.style = Paint.Style.FILL
             }
         }
+        var play: String? = null
+        if (showPanel) {
+            val pth = if (inRows) list.getOrNull(row)?.preview else null
+            val px = 1440 * u; val py = 190 * u; val pw = 400 * u; val ph = 225 * u
+            paint.style = Paint.Style.FILL; paint.color = Color.argb(30, 255, 255, 255)
+            rect.set(px - 3 * u, py - 3 * u, px + pw + 3 * u, py + ph + 3 * u); c.drawRoundRect(rect, 6 * u, 6 * u, paint)
+            if (pth != null) {
+                val pn = VizSettings.panel(ctx, prefs, pth)
+                play = pn.play
+                if (play == null) {   // no picture: the same box, with a word
+                    paint.color = Color.argb(60, 0, 0, 0); rect.set(px, py, px + pw, py + ph); c.drawRect(rect, paint)
+                    text.typeface = Fonts.regular(ctx); text.textSize = 22 * u; text.color = Color.argb(140, 255, 255, 255); text.textAlign = Paint.Align.CENTER
+                    c.drawText("No preview", px + pw / 2, py + ph / 2 + 8 * u, text); text.textAlign = Paint.Align.LEFT
+                }
+                var ty = py + ph + 46 * u
+                text.typeface = Fonts.semibold(ctx); text.textSize = 28 * u; text.color = Color.WHITE
+                for (ln in wrap(pn.name, pw, 3)) { c.drawText(ln, px, ty, text); ty += 36 * u }
+                text.typeface = Fonts.regular(ctx); text.textSize = 21 * u; text.color = Color.argb(150, 255, 255, 255)
+                ty += 4 * u
+                val wh = TextUtils.ellipsize(pn.where, text, pw, TextUtils.TruncateAt.END); c.drawText(wh, 0, wh.length, px, ty, text); ty += 34 * u
+                text.color = Color.argb(200, 255, 255, 255)
+                for (l in pn.lines) for (ln in wrap(l, pw, 2)) { c.drawText(ln, px, ty, text); ty += 30 * u }
+            } else {
+                text.typeface = Fonts.regular(ctx); text.textSize = 22 * u; text.color = Color.argb(120, 255, 255, 255); text.textAlign = Paint.Align.CENTER
+                c.drawText("Move to a preset to see it", px + pw / 2, py + ph / 2 + 8 * u, text); text.textAlign = Paint.Align.LEFT
+            }
+        }
+        syncPreview(play, u)
         text.typeface = Fonts.regular(ctx); text.textSize = 21 * u; text.color = Color.argb(130, 255, 255, 255)
         c.drawText(if (pages[page] == "Quick buttons") "OK to switch on or off, hold OK on one that is on to move it, Back to go back" else "OK to change, Back to go back", 748 * u, 1005 * u, text)
         peopleSettings.pad?.draw(c, w, h)

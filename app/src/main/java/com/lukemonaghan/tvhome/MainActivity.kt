@@ -25,6 +25,7 @@ class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
     private var packageWatcher: BroadcastReceiver? = null
     private lateinit var root: android.widget.FrameLayout
     private var viz: Visualiser? = null
+    private var preview: PresetPreview? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,6 +78,7 @@ class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
     /** The MilkDrop visualiser goes between the video and the home, and only exists while the music view uses it. */
     private fun startViz() {
         if (viz != null || isFinishing || isDestroyed) return
+        stopPreview()   // one projectM at a time
         val prefs = getSharedPreferences("home", MODE_PRIVATE)
         val v = Visualiser(this, prefs, home.audio, { if (viz != null) home.vizLive(true) }, { n -> home.vizName(n) })
         viz = v
@@ -91,7 +93,26 @@ class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
         root.removeView(v)
     }
 
-    override fun onPause() { resumed = false; stopViz(); if (::video.isInitialized) video.pause(); super.onPause() }
+    override fun vizPreview(path: String?, x: Int, y: Int, w: Int, h: Int) {
+        main.post {
+            if (path == null) { stopPreview(); return@post }
+            if (viz != null || isFinishing || isDestroyed || !ProjectM.available) return@post
+            val v = preview ?: PresetPreview(this, getSharedPreferences("home", MODE_PRIVATE)).also {
+                preview = it
+                root.addView(it, android.widget.FrameLayout.LayoutParams(w, h).apply { leftMargin = x; topMargin = y })
+            }
+            v.show(path)
+        }
+    }
+
+    private fun stopPreview() {
+        val v = preview ?: return
+        preview = null
+        v.shutDown()
+        root.removeView(v)
+    }
+
+    override fun onPause() { resumed = false; stopViz(); stopPreview(); if (::video.isInitialized) video.pause(); super.onPause() }
 
     // ---- Home settings, Look and scenes, Your photos: Android's file picker, where the TV has one
     override fun pickPhotos(): Boolean {
