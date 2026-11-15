@@ -17,6 +17,15 @@ permission notice is kept in `LICENSE`, as the licence requires.
 Both copied classes were moved to the package `com.lukemonaghan.tvhome` and their comments reworded.
 Other changes made after copying are in this repository's git history.
 
+## What was ported (rewritten for plain Views and Canvas, logic and wording kept)
+
+| Here | From couch-tv |
+|---|---|
+| `Updater.kt` | `tv-home/android/.../Updater.kt` (the page bridge removed, release address made a setting) |
+| `HomeAssistant.kt`, `Doorbell.kt` | same folder, `HomeAssistant.kt`, `Doorbell.kt` (the page bridge removed) |
+| `SmartHomeScreen.kt` | `tv-home/web/smarthome.js` and its CSS, drawn on a Canvas |
+| `CustomCards.kt` | `tv-home/web/cards.js` |
+
 ## What is not copied
 couch-tv's own `config.json`, `.env`, TV addresses, build output and any history files. Those are
 private to the machine they were made on.

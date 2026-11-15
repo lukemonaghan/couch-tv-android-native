@@ -42,10 +42,13 @@ class MainActivity : Activity(), HomeActions {
         main.postDelayed({ FireWatch.rebindIfUnbound(applicationContext) }, 10_000L)   // listed but not bound after a force-stop
         watchPackages()
         askTvListings()
+        Plat.init(this)   // smart home, doorbell, custom cards, updates: all off until set up
+        main.postDelayed({ if (!isFinishing && !isDestroyed) Plat.firstRun() }, 2500L)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        Plat.readExtras(intent)   // settings a computer sent with am start (tools/send-config.sh)
         // The remote's gear button, caught by KeyWatch: the gear menu comes later.
         if (intent.getBooleanExtra("gear", false)) { Log.i("tvhome", "gear pressed"); return }
         backToFirstTile()   // Home pressed while we are already in front
@@ -55,12 +58,20 @@ class MainActivity : Activity(), HomeActions {
         super.onResume()
         resumed = true
         if (!QuickSystem.justPressed()) restoreTimeout()   // a screen-off time left short by the sleep timer or the screensaver button is put back (not in the first moments of a screensaver press)
+        Plat.resumed()
         if (::home.isInitialized) home.refresh()   // an app may have been installed or removed while we were away
     }
 
     override fun onPause() { resumed = false; super.onPause() }
 
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == HomeRole.REQUEST) Plat.homeAnswered()
+    }
+
     override fun onDestroy() {
+        CustomCards.listener = null; Updater.listener = null
         main.removeCallbacksAndMessages(null)
         packageWatcher?.let { runCatching { unregisterReceiver(it) } }
         super.onDestroy()

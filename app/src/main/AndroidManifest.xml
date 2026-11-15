@@ -12,6 +12,11 @@
          after an update or a reboot (FireWatch.kt). The undo takes it back. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
+    <!-- Updates: hands a downloaded release to Android's own installer, which always asks first (Updater.kt). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- The doorbell card (Doorbell.kt, smart home): shown over other apps. Off until the person at the TV (or a computer) allows it. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
@@ -127,6 +132,8 @@
             </intent-filter>
             <meta-data android:name="android.media.tv.input" android:resource="@xml/tcl_placeholder_input" />
         </service>
+        <!-- What Android's installer answers after an update was handed to it (Updater.kt). Only its own PendingIntent reaches it. -->
+        <receiver android:name=".Updater$Result" android:exported="false" />
         <receiver android:name=".FireWatch$Restore" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
