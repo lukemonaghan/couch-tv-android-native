@@ -10,6 +10,9 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
+import java.io.File
+import org.json.JSONArray
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
@@ -57,6 +60,7 @@ class WatchNext(private val ctx: Context, private val onChange: () -> Unit) {
         worker.execute {
             val rows = runCatching { read() }.getOrDefault(emptyList())
             main.post { cards = rows; onChange() }
+            runCatching { saveCards(rows) }
         }
     }
 
@@ -94,7 +98,7 @@ class WatchNext(private val ctx: Context, private val onChange: () -> Unit) {
         art.get(key)?.let { return it }
         if (!pending.add(key)) return null
         worker.execute {
-            val bmp = runCatching { fetch(key, w, h) }.getOrNull()
+            val bmp = runCatching { fromDisk(key, w, h) ?: fetch(key, w, h)?.also { toDisk(key, w, h, it) } }.getOrNull()
             main.post { pending.remove(key); if (bmp != null) { art.put(key, bmp); onChange() } }
         }
         return null
@@ -117,7 +121,38 @@ class WatchNext(private val ctx: Context, private val onChange: () -> Unit) {
         return out
     }
 
-    fun clear() { art.evictAll() }
+    // Pictures live on disk too (already shrunk to the card), so a restart or a memory squeeze does not fetch them again.
+    private val dir = File(ctx.cacheDir, "watchnext").apply { mkdirs() }
+    private fun file(key: String, w: Int, h: Int) = File(dir, "${key.hashCode().toUInt().toString(16)}_${w}x$h.jpg")
+    private fun fromDisk(key: String, w: Int, h: Int): Bitmap? {
+        val f = file(key, w, h)
+        return if (f.exists()) BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }) else null
+    }
+    private fun toDisk(key: String, w: Int, h: Int, b: Bitmap) {
+        runCatching {
+            file(key, w, h).outputStream().use { b.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+            val files = dir.listFiles() ?: return
+            if (files.size > 120) files.sortedBy { it.lastModified() }.take(files.size - 100).forEach { it.delete() }
+        }
+    }
+
+    /** The last list, so the cards show at once after a restart, before the TV provider answers. */
+    private fun saveCards(list: List<Card>) {
+        val a = JSONArray()
+        list.forEach { a.put(JSONObject().put("id", it.id).put("pkg", it.pkg).put("app", it.app).put("title", it.title).put("ep", it.episode)
+            .put("art", it.art ?: JSONObject.NULL).put("p", it.progress.toDouble()).put("uri", it.intentUri ?: JSONObject.NULL)) }
+        prefs.edit().putString("watchNextLast", a.toString()).apply()
+    }
+    private fun loadCards(): List<Card> = runCatching {
+        val a = JSONArray(prefs.getString("watchNextLast", "[]")); val gone = hidden()
+        (0 until a.length()).map { a.getJSONObject(it) }.map { o ->
+            Card(o.getLong("id"), o.getString("pkg"), o.getString("app"), o.getString("title"), o.getString("ep"),
+                if (o.isNull("art")) null else o.getString("art"), o.getDouble("p").toFloat(), if (o.isNull("uri")) null else o.getString("uri"))
+        }.filter { it.id.toString() !in gone && "${it.pkg}|${it.title}" !in gone }
+    }.getOrDefault(emptyList())
+    init { if (permitted) cards = loadCards() }
+
+    fun clear() { art.evictAll(); dir.listFiles()?.forEach { it.delete() } }
 
     companion object {
         const val READ_TV = "android.permission.READ_TV_LISTINGS"
