@@ -60,3 +60,9 @@ Seeded prefs by writing `shared_prefs/home.xml` (script idea: push XML to /data/
 - Bedroom TV still has USB debugging ON (port 5555). Re-run `scripts/check-tv.py <tv-ip>` in the couch-tv repo and confirm it is closed when done.
 - TV 3 is not set up yet.
 - Undo for the old app: `TV_IP=<ip> TV_ID=<id> TV_NAME=<id> sh tv-home/tools/undo.sh` in the couch-tv repo.
+
+## Update 2026-11-15 evening (`137cb44`)
+- Sleep timer is now a dropdown (15/30/60/90/Off) like upstream; buttons show "Off in N min"; Classic Look pill shows the next look.
+- Kids mode poster/app rings and the people pill focus ring are strokes now (were solid white discs). Checked on the emulator.
+- Still unchecked on screen: Smart home, Doorbell, Updater, Now playing, soundscape audio, Smart Idle, Input menu with real inputs, moving tiles, weather fx, video background, own photos, First-run prompt.
+- Still to do: compare new features with the Playwright reference, language support, real-TV memory check (needs the user's yes), close Bedroom TV USB debugging.
