@@ -15,7 +15,8 @@ class AppItem(val pkg: String, val label: String, val ri: ResolveInfo)
  * Plain Android, no libraries. State is a few strings in SharedPreferences.
  */
 class AppStore(private val ctx: Context) {
-    private val prefs = ctx.getSharedPreferences("apps", Context.MODE_PRIVATE)
+    private var prefs = ctx.getSharedPreferences("apps", Context.MODE_PRIVATE)
+    private var profile: String? = null
 
     /** Apps in order. items[0 until line] are in the dock, the rest are behind More apps. */
     var items: List<AppItem> = emptyList(); private set
@@ -120,6 +121,22 @@ class AppStore(private val ctx: Context) {
         }
         items = list
         save()
+    }
+
+    /**
+     * Whose apps these are: each person has their own order and dock line (and "new" dots). A person who has none yet starts from
+     * what the shared list holds. [id] null is the one shared list (nobody, or one person).
+     */
+    fun setProfile(id: String?) {
+        if (id == profile) return
+        profile = id
+        prefs = ctx.getSharedPreferences(if (id == null) "apps" else "apps_$id", Context.MODE_PRIVATE)
+        if (id != null && !prefs.contains("order")) {
+            val base = ctx.getSharedPreferences("apps", Context.MODE_PRIVATE)
+            if (base.contains("order")) prefs.edit().putString("order", base.getString("order", null)).putInt("line", base.getInt("line", dockSize))
+                .putStringSet("seen", base.getStringSet("seen", null)).apply()
+        }
+        reload()
     }
 
     private fun save() {

@@ -41,7 +41,7 @@ interface HomeActions {
  * The remote's D-pad drives everything through the key callbacks below.
  */
 class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
-    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS, TOP }
+    private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS, TOP, POP, KIDS }
     /** Night: the scene with the big glass clock and the dock. OLED: a grid on pure black. Classic: a grid over the photo. */
     private enum class Look { NIGHT, OLED, CLASSIC }
 
@@ -74,9 +74,16 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val worker = Executors.newSingleThreadExecutor()
 
     private val weather = Weather(ctx) { sceneKey = ""; invalidate() }
-    private val settings by lazy { SettingsScreen(ctx, prefs, store, weather, act) { onSettingsChanged() } }
+    private val settings by lazy { SettingsScreen(ctx, prefs, store, weather, act, peopleSettings) { onSettingsChanged() } }
     private val icons = Icons(ctx) { invalidate() }
     private val watch = WatchNext(ctx) { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); if (cards().isEmpty() && mode == Mode.CARDS) mode = Mode.DOCK; invalidate() }
+
+    // ---- people: each has their own apps; a kids profile gets the kids shelf (KidsMode) instead of this home
+    private val ppl = People(prefs)
+    private val peopleUi = PeopleUi(ctx, ppl) { c, l, t, r, b, rad -> glass(c, l, t, r, b, rad) }
+    private var unlockedFor: String? = null   // a kids profile a grown up unlocked with no grown up profile to move to
+    private val kids = KidsMode(ctx, ppl, icons, watch, act, { clockText(Calendar.getInstance()) }, { kid, _ -> kidUnlocked(kid) }, { invalidate() })
+    private val peopleSettings = PeopleSettings(ctx, ppl, peopleUi, { cards() }, { store.items }, act) { syncPerson() }
 
     /** Keep watching: the Watch Next list. With the "demoCards" pref set (screenshots) two made-up shows stand in. */
     private fun cards(): List<Card> =
@@ -92,21 +99,22 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
         textAlign = Paint.Align.CENTER
     }
-    init { store.dockSize = prefs.getInt("dockSize", 10); store.reload() }
+    init { store.dockSize = prefs.getInt("dockSize", 10); store.reload(); main.post { syncPerson() } }
     private val rect = RectF()
     private val clip = Path()
 
     // ---- the top row: the people switch (top left) and the quick buttons (top right)
 
-    fun people(): List<String> = prefs.getString("people", null)?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
+    fun people(): List<String> = ppl.list().map { it.name }
     private fun quick(): List<String> = (prefs.getString("quick", null) ?: "sleep,look").split(',').filter { it == "sleep" || it == "look" }
     private val sleepOptions = listOf(0, 15, 30, 60, 90)
     private var sleepIdx = 0
 
     private class Top(val kind: String, val label: String = "")
     private fun topItems(): List<Top> {
-        val p = people()
-        return (if (p.size >= 2) p.map { Top("person", it) } else emptyList()) + quick().map { Top(it) }
+        val p = ppl.list()
+        val who = if (p.size >= 3) listOf(Top("head", ppl.current()?.name.orEmpty())) else if (p.size == 2) p.map { Top("person", it.name) } else emptyList()
+        return who + quick().map { Top(it) }
     }
 
     /** The scenes the household has on, in couch-tv's order (Home settings, Look and scenes). */
@@ -192,11 +200,12 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ------------------------------------------------------------------ what the Activity calls
 
     /** Home pressed while the home is already showing: back to the first tile. */
-    fun goHome() { mode = Mode.DOCK; fi = 0; invalidate() }
+    fun goHome() { if (mode == Mode.KIDS) { kids.home(); return }; peopleUi.drop(); mode = Mode.DOCK; fi = 0; invalidate() }
 
     /** The app list changed (a package came or went, or the home came back to the front). */
     fun refresh() {
         store.reload()
+        kids.refresh()
         watch.reload()
         fi = fi.coerceIn(0, store.line + 1)
         mi = mi.coerceIn(0, maxOf(0, store.items.size - 1))
@@ -213,13 +222,24 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         Mode.MENU -> { mode = menuFrom; invalidate(); true }
         Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, store.line + 1); invalidate(); true }
         Mode.CARDS, Mode.TOP -> { mode = Mode.DOCK; invalidate(); true }
-        Mode.SETTINGS -> { if (!settings.back()) { mode = Mode.DOCK; fi = store.line }; invalidate(); true }
+        Mode.SETTINGS -> { if (!settings.back()) { mode = Mode.DOCK; fi = store.line; syncPerson() }; invalidate(); true }
+        Mode.POP -> { peopleUi.drop(); mode = Mode.TOP; invalidate(); true }
+        Mode.KIDS -> { kids.back(); true }
         Mode.DOCK -> false
     }
 
     // ------------------------------------------------------------------ keys
 
+    private var kidsOk = false   // OK went down in kids mode: its key up must not press whatever the home becomes next
+
     override fun onKeyDown(code: Int, e: KeyEvent): Boolean {
+        if (mode == Mode.KIDS) {
+            if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) kidsOk = true
+            return kids.key(code, e) || super.onKeyDown(code, e)
+        }
+        if (mode == Mode.SETTINGS && (code in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 || code in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 || code == KeyEvent.KEYCODE_DEL)) {
+            if (settings.key(code)) return true
+        }
         when (code) {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
                 dir(code); return true
@@ -243,6 +263,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     override fun onKeyUp(code: Int, e: KeyEvent): Boolean {
+        if (kidsOk && (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER)) { kidsOk = false; return true }
         if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
             if (!longHandled) press()
             return true
@@ -274,7 +295,11 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (mode == Mode.SETTINGS) { settings.key(code); return }
         val dockCount = store.line + 2
         when (mode) {
-            Mode.SETTINGS -> {}
+            Mode.SETTINGS, Mode.KIDS -> {}
+            Mode.POP -> when (code) {
+                KeyEvent.KEYCODE_DPAD_UP -> peopleUi.up()
+                KeyEvent.KEYCODE_DPAD_DOWN -> peopleUi.down()
+            }
             Mode.TOP -> {
                 val n = topItems().size
                 when (code) {
@@ -353,7 +378,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Mode.SETTINGS -> settings.key(KeyEvent.KEYCODE_DPAD_CENTER)
             Mode.TOP -> topItems().getOrNull(ti)?.let { t ->
                 when (t.kind) {
-                    "person" -> prefs.edit().putInt("person", people().indexOf(t.label).coerceAtLeast(0)).apply()
+                    "person" -> ppl.list().getOrNull(ti)?.let { switchTo(it.id) }
+                    "head" -> { peopleUi.open(); mode = Mode.POP }
                     "sleep" -> { sleepIdx = (sleepIdx + 1) % sleepOptions.size; act.setSleepTimer(sleepOptions[sleepIdx]) }
                     "look" -> cycleLook()
                 }
@@ -363,11 +389,14 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Mode.MORE -> store.items.getOrNull(mi)?.let { launch(it) }
             Mode.MENU -> chooseMenu()
             Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate() }
+            Mode.POP -> if (peopleUi.lifted) peopleUi.drop() else peopleUi.picked()?.let { switchTo(it.id); mode = Mode.TOP }
+            Mode.KIDS -> {}
         }
     }
 
     private fun longPress() {
         when (mode) {
+            Mode.POP -> peopleUi.lift()
             Mode.DOCK -> if (fi < store.line) openMenu(fi)
             Mode.MORE -> {
                 if (mi >= store.line) {
@@ -379,6 +408,41 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             else -> {}
         }
         invalidate()
+    }
+
+    // ------------------------------------------------------------------ who is watching
+
+    /** Another person is on screen: their own apps, and the kids shelf if theirs is a kids profile. */
+    private fun switchTo(id: String) {
+        ppl.select(id)
+        if (unlockedFor != null && unlockedFor != id) unlockedFor = null
+        syncPerson()
+        fi = fi.coerceIn(0, store.line + 1)
+    }
+
+    /** Call whenever who is watching, or the people, may have changed: app order follows the person, kids mode comes or goes. */
+    private fun syncPerson() {
+        val cur = ppl.current()
+        store.setProfile(if (ppl.count >= 2) cur?.id else null)
+        if (unlockedFor != null && cur?.id != unlockedFor) unlockedFor = null
+        fi = fi.coerceIn(0, store.line + 1)
+        if (cur != null && ppl.isKid(cur) && cur.id != unlockedFor && mode != Mode.SETTINGS) {
+            if (mode != Mode.KIDS) mode = Mode.KIDS
+            kids.enter(cur)
+        } else if (kids.active || mode == Mode.KIDS) {
+            if (mode == Mode.KIDS) { mode = Mode.DOCK; fi = 0 }
+            kids.leave()
+        }
+        invalidate()
+    }
+
+    /** The parent PIN was right: the TV moves to the first grown up, or stays on this profile, out of kids mode, until it changes. */
+    private fun kidUnlocked(kid: Person) {
+        val grown = ppl.list().firstOrNull { !ppl.isKid(it) }
+        if (grown != null) { ppl.select(grown.id); unlockedFor = null } else unlockedFor = kid.id
+        mode = Mode.DOCK; fi = 0
+        kids.leave()
+        syncPerson()
     }
 
     private fun launch(a: AppItem) { store.opened(a.pkg); act.launch(a.pkg); invalidate() }
@@ -447,6 +511,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     override fun onDraw(c: Canvas) {
         val u = height / 1080f
+        if (mode == Mode.KIDS) { kids.draw(c, width, height); return }
         if (mode == Mode.SETTINGS) { settings.draw(c, width, height); return }
         if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || look == Look.OLED) {
             c.drawColor(if (look == Look.OLED && mode != Mode.MORE) Color.BLACK else ground)
@@ -473,6 +538,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else { drawTop(c, u); drawCards(c, u); drawDock(c, u) }; drawMenu(c, u) }
             else -> { drawTop(c, u); drawCards(c, u); drawDock(c, u) }
         }
+        if (mode == Mode.POP) peopleUi.drawPop(c, u)
     }
 
     /** Classic and OLED: the clock at the top right, the date, and under Classic the photo's place and photographer. */
@@ -531,7 +597,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val items = topItems()
         if (items.isEmpty()) return
         val people = items.filter { it.kind == "person" }
-        val sel = prefs.getInt("person", 0).coerceIn(0, maxOf(0, people.size - 1))
+        val sel = ppl.currentIndex().coerceIn(0, maxOf(0, people.size - 1))
         text.typeface = Fonts.semibold(context); text.textSize = 23 * u; text.textAlign = Paint.Align.LEFT
         if (people.isNotEmpty()) {
             val pw = people.map { text.measureText(it.label) + 40 * u }
@@ -553,9 +619,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             }
             text.color = Color.WHITE
         }
+        if (items.firstOrNull()?.kind == "head") peopleUi.drawHead(c, u, mode == Mode.TOP && ti == 0, true)
         // quick buttons, right to left from 80 px off the edge
         var right = width - 80 * u
-        val quick = items.filter { it.kind != "person" }.asReversed()
+        val quick = items.filter { it.kind != "person" && it.kind != "head" }.asReversed()
         for (q in quick) {
             val idx = items.indexOf(q)
             val focus = mode == Mode.TOP && ti == idx
@@ -583,7 +650,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val items = topItems()
         if (items.isEmpty()) return
         val people = items.filter { it.kind == "person" }
-        val sel = prefs.getInt("person", 0).coerceIn(0, maxOf(0, people.size - 1))
+        val sel = ppl.currentIndex().coerceIn(0, maxOf(0, people.size - 1))
         text.typeface = Fonts.semibold(context); text.textSize = 23 * u; text.textAlign = Paint.Align.LEFT
         if (people.isNotEmpty()) {
             val pw = people.map { text.measureText(it.label) + 40 * u }
@@ -602,8 +669,9 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             }
             text.color = Color.WHITE
         }
+        if (items.firstOrNull()?.kind == "head") peopleUi.drawHead(c, u, mode == Mode.TOP && ti == 0, false)
         var right = width - 80 * u
-        for (q in items.filter { it.kind != "person" }.asReversed()) {
+        for (q in items.filter { it.kind != "person" && it.kind != "head" }.asReversed()) {
             val idx = items.indexOf(q); val focus = mode == Mode.TOP && ti == idx
             val set = q.kind == "sleep" && sleepOptions[sleepIdx] > 0
             val label = when { q.kind == "look" -> "Look"; set -> "${sleepOptions[sleepIdx]} min"; else -> "Sleep timer" }
