@@ -152,7 +152,7 @@ class WatchNext(private val ctx: Context, private val onChange: () -> Unit) {
     }.getOrDefault(emptyList())
     init { if (permitted) cards = loadCards() }
 
-    fun clear() { art.evictAll(); dir.listFiles()?.forEach { it.delete() } }
+    fun clear() { art.evictAll() }   // memory only: the files on disk are what make the next start quick
 
     companion object {
         const val READ_TV = "android.permission.READ_TV_LISTINGS"
