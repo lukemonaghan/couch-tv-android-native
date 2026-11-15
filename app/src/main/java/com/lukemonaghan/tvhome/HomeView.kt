@@ -739,10 +739,12 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (focused) { c.translate(cx, cy - 10 * u * (size / (112 * u))); c.scale(1.16f, 1.16f); c.translate(-cx, -cy) }
         rect.set(x, y, x + size, y + size)
         if (focused) {   // the white ring and its shadow
-            softShadow(c, rect, radius, 18 * u, 22 * u, 110)
-            rect.set(x - 4 * u, y - 4 * u, x + size + 4 * u, y + size + 4 * u)
-            paint.color = Color.WHITE
-            c.drawRoundRect(rect, radius + 4 * u, radius + 4 * u, paint)
+            softShadow(c, rect, radius, 18 * u, 22 * u, if (app != null) 110 else 40)
+            // a ring, not a white disc, so the Settings and More apps glass tiles stay see-through inside it
+            rect.set(x - 2 * u, y - 2 * u, x + size + 2 * u, y + size + 2 * u)
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = 4 * u; paint.color = Color.WHITE; paint.alpha = 255
+            c.drawRoundRect(rect, radius + 2 * u, radius + 2 * u, paint)
+            paint.style = Paint.Style.FILL
             rect.set(x, y, x + size, y + size)
         }
         paint.style = Paint.Style.FILL

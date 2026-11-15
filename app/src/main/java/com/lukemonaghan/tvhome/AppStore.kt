@@ -33,7 +33,7 @@ class AppStore(private val ctx: Context) {
         val pm = ctx.packageManager
         val q = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
         val found = pm.queryIntentActivities(q, 0)
-            .filter { it.activityInfo.packageName != ctx.packageName && it.activityInfo.packageName != SETTINGS_PKG }
+            .filter { it.activityInfo.packageName != ctx.packageName && it.activityInfo.packageName != SETTINGS_PKG && it.activityInfo.packageName !in OLD_HOMES }
             .distinctBy { it.activityInfo.packageName }
             .map { AppItem(it.activityInfo.packageName, it.loadLabel(pm).toString(), it) }
             .sortedBy { it.label.lowercase() }
@@ -128,5 +128,7 @@ class AppStore(private val ctx: Context) {
 
     companion object {
         const val SETTINGS_PKG = "com.android.tv.settings"
+        /** Earlier versions of this home (couch-tv's web home and its on-TV app): never listed as an app. */
+        val OLD_HOMES = setOf("app.couchtv.launcher", "dev.couchtv.ontv", "dev.couchtv.sync")
     }
 }
