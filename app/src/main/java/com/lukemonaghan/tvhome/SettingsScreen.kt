@@ -20,10 +20,12 @@ class SettingsScreen(
     private val store: AppStore,
     private val weather: Weather,
     private val act: HomeActions,
+    private val peopleSettings: PeopleSettings,
     private val changed: () -> Unit,
 ) {
+    init { peopleSettings.onNavigate = { row = 0; scroll = 0 }; peopleSettings.redraw = { changed() } }
     private class Row(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
-                       val header: Boolean = false, val press: (() -> Unit)? = null)
+                       val header: Boolean = false, val avatar: Person? = null, val press: (() -> Unit)? = null)
 
     private val pages = listOf("Location", "Weather", "Look and scenes", "Apps", "People", "Quick buttons", "About")
     private var page = 0
@@ -34,12 +36,13 @@ class SettingsScreen(
     private val quickSys by lazy { QuickSystem(ctx, prefs) }
     private var results: List<Weather.Place>? = null   // the place search answer, shown on the Location page
 
-    fun open() { page = 0; inRows = false; row = 0; scroll = 0; results = null }
+    fun open() { page = 0; inRows = false; row = 0; scroll = 0; results = null; peopleSettings.reset() }
 
     /** Back: one step out. False when the screen should close. */
     fun back(): Boolean {
         if (lift != null) { lift = null; return true }
         if (results != null) { results = null; row = 0; return true }
+        if (pages[page] == "People" && peopleSettings.back()) return true
         if (inRows) { inRows = false; return true }
         return false
     }
@@ -125,15 +128,7 @@ class SettingsScreen(
             list += Row("OK moves an app between home, More apps and hidden", "Hold OK on an app on the home to change the order")
             list
         }
-        "People" -> {
-            val ppl = prefs.getString("people", null)?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
-            fun save(l: List<String>) { prefs.edit().putString("people", l.joinToString("|")).apply() }
-            ppl.mapIndexed { i, n ->
-                Row(n, if (ppl.size >= 2) "OK to remove" else "", "") { save(ppl.filterIndexed { j, _ -> j != i }); row = 0 }
-            } + Row("Add a person", "Two or more people show a switch at the top left") {
-                act.askText("Name") { n -> save(ppl + n.take(24).replace("|", " ")); changed() }
-            }
-        }
+        "People" -> peopleSettings.rows().map { r -> Row(r.title, r.note, r.value, r.check, r.header, r.avatar, r.press) }
         "Quick buttons" -> {
             val on = QuickButtons.enabled(prefs)
             QuickButtons.listed(prefs).map { id ->
@@ -175,6 +170,7 @@ class SettingsScreen(
             changed()
             return true
         }
+        peopleSettings.pad?.let { it.key(code); changed(); return true }
         val list = rows()
         when (code) {
             KeyEvent.KEYCODE_DPAD_UP -> if (inRows) { do { if (row > 0) row-- } while (list.getOrNull(row)?.header == true && row > 0) } else if (page > 0) { page--; row = 0; results = null }
@@ -225,7 +221,7 @@ class SettingsScreen(
 
         // the page
         text.typeface = Fonts.semibold(ctx); text.color = Color.WHITE; text.textSize = 38 * u
-        c.drawText(if (results != null) "Pick a place" else pages[page], 748 * u, 140 * u, text)
+        c.drawText(if (results != null) "Pick a place" else if (pages[page] == "People") peopleSettings.title() else pages[page], 748 * u, 140 * u, text)
         val list = rows()
         val rh = 78 * u; val gap = 8 * u
         val top = 190 * u
@@ -249,15 +245,17 @@ class SettingsScreen(
             c.drawRoundRect(rect, 18 * u, 18 * u, paint)
             val fg = if (focus) Color.rgb(17, 17, 17) else Color.WHITE
             text.typeface = Fonts.semibold(ctx); text.color = fg; text.textSize = 29 * u
-            val avail = 1840 * u - 720 * u - 60 * u - (if (rw.value.isNotEmpty() || rw.check != null) 260 * u else 0f)
+            val tx = if (rw.avatar != null) 746 * u + 64 * u else 746 * u
+            if (rw.avatar != null) peopleSettings.ui.avatar(c, 746 * u + 24 * u, y + rh / 2, 24 * u, rw.avatar, u)
+            val avail = 1840 * u - 720 * u - 60 * u - (if (rw.avatar != null) 64 * u else 0f) - (if (rw.value.isNotEmpty() || rw.check != null) 260 * u else 0f)
             val t = TextUtils.ellipsize(rw.title, text, avail, TextUtils.TruncateAt.END)
             val twoLines = rw.note.isNotEmpty()
-            c.drawText(t, 0, t.length, 746 * u, y + (if (twoLines) 35 else 48) * u, text)
+            c.drawText(t, 0, t.length, tx, y + (if (twoLines) 35 else 48) * u, text)
             if (twoLines) {
                 text.typeface = Fonts.regular(ctx); text.textSize = 21 * u
                 text.color = if (focus) Color.argb(160, 17, 17, 17) else Color.argb(150, 255, 255, 255)
                 val n = TextUtils.ellipsize(rw.note, text, avail, TextUtils.TruncateAt.END)
-                c.drawText(n, 0, n.length, 746 * u, y + 62 * u, text)
+                c.drawText(n, 0, n.length, tx, y + 62 * u, text)
             }
             if (rw.value.isNotEmpty()) {
                 text.typeface = Fonts.medium(ctx); text.textSize = 27 * u; text.textAlign = Paint.Align.RIGHT
@@ -281,6 +279,7 @@ class SettingsScreen(
         }
         text.typeface = Fonts.regular(ctx); text.textSize = 21 * u; text.color = Color.argb(130, 255, 255, 255)
         c.drawText(if (pages[page] == "Quick buttons") "OK to switch on or off, hold OK on one that is on to move it, Back to go back" else "OK to change, Back to go back", 748 * u, 1005 * u, text)
+        peopleSettings.pad?.draw(c, w, h)
     }
 
     /** Small line icons on the sidebar tiles. */
