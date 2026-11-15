@@ -26,6 +26,7 @@ else "$PY" "$T" shell "settings delete secure enabled_accessibility_services" > 
 echo "2/3  Taking the grants back"
 "$PY" "$T" shell "appops set $APP WRITE_SETTINGS default" > /dev/null 2>&1 || true
 "$PY" "$T" shell "appops set $APP SYSTEM_ALERT_WINDOW default" > /dev/null 2>&1 || true
+"$PY" "$T" shell "cmd notification disallow_listener $APP/$APP.MediaListener" > /dev/null 2>&1 || true
 "$PY" "$T" shell "pm revoke $APP android.permission.WRITE_SECURE_SETTINGS" > /dev/null 2>&1 || true
 "$PY" "$T" shell "pm revoke $APP android.permission.READ_TV_LISTINGS" > /dev/null 2>&1 || true
 

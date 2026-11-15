@@ -35,10 +35,12 @@ PREV="$HERE/.previous-home.$TV_ID"
 echo "1/5  Installing tvhome"
 "$PY" "$T" install "$APK"
 
-echo "2/5  Granting Watch Next, secure settings and system settings"
+echo "2/5  Granting Watch Next, secure settings, system settings and music access"
 "$PY" "$T" shell "pm grant $APP android.permission.READ_TV_LISTINGS" > /dev/null 2>&1 || true
 "$PY" "$T" shell "pm grant $APP android.permission.WRITE_SECURE_SETTINGS" > /dev/null 2>&1 || true
 "$PY" "$T" shell "appops set $APP WRITE_SETTINGS allow" > /dev/null 2>&1 || true
+# Now playing (media sessions) needs notification access; the service reads no notifications (see MediaListener.kt)
+"$PY" "$T" shell "cmd notification allow_listener $APP/$APP.MediaListener" > /dev/null 2>&1 || true
 # the doorbell card (smart home) is shown over other apps: only when asked for with DOORBELL=1
 if [ "${DOORBELL:-0}" = 1 ]; then "$PY" "$T" shell "appops set $APP SYSTEM_ALERT_WINDOW allow" > /dev/null 2>&1 || true; fi
 
