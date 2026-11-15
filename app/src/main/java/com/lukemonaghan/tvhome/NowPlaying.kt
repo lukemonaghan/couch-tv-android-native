@@ -47,7 +47,8 @@ class NowPlaying(
     private var art: Bitmap? = null
     private var bg: Bitmap? = null
     private val viz = AudioViz(ctx)
-    private var lyr: List<Lyrics.Line>? = null
+    private var lyr: Lyrics.Result? = null
+    private var lyrDone = false   // the look-up came back (with or without lyrics)
     val lyricsOn get() = prefs.getBoolean("np_lyrics", false)
     private var artKey = ""
     private var glow1 = Color.rgb(88, 66, 160); private var glow2 = Color.rgb(40, 90, 160)
@@ -110,8 +111,8 @@ class NowPlaying(
         track = Track(pick.packageName, app, title, artist, album, playing, if (pos < 0) 0 else pos, dur, pick)
         readAt = SystemClock.uptimeMillis()
         if (newTrack) {
-            lastTrackKey = key; ambientDismissed = false; lyr = null
-            if (lyricsOn) Lyrics.fetch(artist, title, album, (dur / 1000).toInt()) { l -> main.post { if (lastTrackKey == key) { lyr = l; changed(false) } } }
+            lastTrackKey = key; ambientDismissed = false; lyr = null; lyrDone = false
+            if (lyricsOn) Lyrics.fetch(artist, title, album, (dur / 1000).toInt()) { l -> main.post { if (lastTrackKey == key) { lyr = l; lyrDone = true; changed(false) } } }
         }
         val auto = newTrack && ambientOn && !ambientDismissed
         if (auto) { ambientOpen = true; ambBtn = 1 }
@@ -176,6 +177,9 @@ class NowPlaying(
 
     /** The full screen view cannot show now (Home settings is open): forget it without remembering a dismissal. */
     fun abandonAmbient() { ambientOpen = false; viz.stop() }
+
+    /** Opens the full screen music view if something is playing (Up from the top of the home). */
+    fun openAmbient(): Boolean { if (!visible) return false; ambientOpen = true; ambientDismissed = false; ambBtn = 1; changed(false); return true }
 
     fun closeAmbient(dismiss: Boolean) { ambientOpen = false; viz.stop(); if (dismiss) ambientDismissed = true; focus() }
 
@@ -430,7 +434,12 @@ class NowPlaying(
 
     /** Three lines of the synced lyrics along the bottom: the one before, the one being sung, the next. */
     private fun drawLyrics(c: Canvas, w: Int, h: Int, u: Float, pos: Long) {
-        val l = lyr ?: return
+        val res = lyr
+        if (res == null) {
+            if (lyrDone) { text.textAlign = Paint.Align.CENTER; text.typeface = Fonts.regular(ctx); text.textSize = 24 * u; text.color = Color.argb(110, 255, 255, 255); c.drawText("No lyrics found for this song", w / 2f, h - 110 * u, text); text.textAlign = Paint.Align.LEFT }
+            return
+        }
+        val l = res.lines
         var i = l.indexOfLast { it.ms <= pos }
         if (i < 0) i = -1
         text.textAlign = Paint.Align.CENTER; text.letterSpacing = 0f
@@ -444,6 +453,7 @@ class NowPlaying(
         row(i - 1, h - 190 * u, 28f, 100, false)
         row(i, h - 130 * u, 44f, 255, true)
         row(i + 1, h - 74 * u, 28f, 130, false)
+        if (!res.synced) { text.typeface = Fonts.regular(ctx); text.textSize = 16 * u; text.color = Color.argb(90, 255, 255, 255); c.drawText("Lyrics are not timed for this song: the lines move along with it", w / 2f, h - 30 * u, text) }
         text.textAlign = Paint.Align.LEFT
     }
 

@@ -260,6 +260,9 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ------------------------------------------------------------------ what the Activity calls
 
     /** Home pressed while the home is already showing: back to the first tile. */
+    /** Up from the top of the home (the now playing card or the quick buttons): the full screen music view, when something is playing. */
+    private fun openMusic() { if (np.openAmbient()) { mode = Mode.NP; np.focus(); invalidate() } }
+
     fun goHome() { idle.wake(); np.blur(); np.abandonAmbient(); if (screenOff) wake(-1); cardMenu = false; if (mode == Mode.KIDS) { kids.home(); return }; if (mode == Mode.SMART) smart.close(); peopleUi.drop(); mode = Mode.DOCK; fi = 0; invalidate() }
 
     /** The app list changed (a package came or went, or the home came back to the front). */
@@ -373,14 +376,16 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Mode.TOP -> {
                 val n = topItems().size
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ti > 0) ti-- else if (np.reach()) { mode = Mode.NP; np.focus() }   // left of the first quick button: the now playing card
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ti > 0) ti-- else if (np.reach()) { mode = Mode.NP; np.focus() }
+                    KeyEvent.KEYCODE_DPAD_UP -> openMusic()   // left of the first quick button: the now playing card
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (ti < n - 1) ti++
                     KeyEvent.KEYCODE_DPAD_DOWN -> if (np.reach()) { mode = Mode.NP; np.focus() } else mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK
                 }
             }
             Mode.NP -> if (!np.key(code)) when (code) {
                 KeyEvent.KEYCODE_DPAD_DOWN -> { np.blur(); mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK }
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_RIGHT -> if (topItems().isNotEmpty()) { np.blur(); mode = Mode.TOP; ti = if (code == KeyEvent.KEYCODE_DPAD_UP) ti.coerceIn(0, topItems().size - 1) else 0 }
+                KeyEvent.KEYCODE_DPAD_UP -> openMusic()   // up from the top: the full screen music view
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (topItems().isNotEmpty()) { np.blur(); mode = Mode.TOP; ti = 0 }
             }
             Mode.DOCK -> if (look == Look.NIGHT) when (code) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (fi > 0) { fi--; tick(SoundEffectConstants.NAVIGATION_LEFT) }
@@ -790,7 +795,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val ph = tw + 2 * padY
         val pl = (width - pw) / 2f
         val pt = height - 46 * u - ph
-        glass(c, pl, pt, pl + pw, pt + ph, 46 * u)
+        // no card behind the dock: the icons sit straight on the scene
         val focus = if (mode == Mode.MOVING) movingIndex else if (mode == Mode.CARDS || mode == Mode.TOP || mode == Mode.NP) -1 else fi
         for (pass in 0..1) for (i in 0 until n) {
             if ((i == focus) != (pass == 1)) continue
@@ -1043,7 +1048,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             if (glassy) glassGlyph(c, u, app, x, y, size, size, focused, false, radius)
             else if (bmp != null) {
                 // the app's icon sits inside the tile with room around it, like the logos in couch-tv's dock
-                val inset = size * 0.15f
+                val inset = 0f   // full size: the icon fills its tile
                 rect.set(x + inset, y + inset, x + size - inset, y + size - inset)
                 val ir = rect.width() * 0.265f
                 clip.reset(); clip.addRoundRect(rect, ir, ir, Path.Direction.CW)
@@ -1132,7 +1137,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         } else if (clear.refused(app, banner)) {
             val b = if (banner) icons.get(app, w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1)) else icons.square(app, w.toInt().coerceAtLeast(1))
             if (b != null) {
-                val inset = if (banner) 0f else w * 0.15f
+                val inset = if (banner) 0f else 0f
                 rect.set(x + inset, y + (if (banner) 0f else inset), x + w - inset, y + h - (if (banner) 0f else inset))
                 clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
                 c.save(); c.clipPath(clip)
