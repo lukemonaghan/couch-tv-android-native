@@ -46,6 +46,7 @@ class NowPlaying(
     var track: Track? = null; private set
     private var art: Bitmap? = null
     private var bg: Bitmap? = null
+    var fa = 0f   // how focused the card is, 0 to 1 (the home eases it)
     private val viz = AudioViz(ctx)
     private var lyr: Lyrics.Result? = null
     private var lyrDone = false   // the look-up came back (with or without lyrics)
@@ -227,11 +228,11 @@ class NowPlaying(
         val r = 30 * u * floatArrayOf(0.55f, 1f, 1.45f)[prefs.getInt("roundness", 1).coerceIn(0, 2)]
         val ringColor = Color.WHITE
         c.save()
-        if (focused && !ambientOpen) { c.translate(x + w / 2, y + h / 2); c.scale(1.05f, 1.05f); c.translate(-(x + w / 2), -(y + h / 2)) }
-        if (focused && !ambientOpen) {
-            paint.style = Paint.Style.FILL; paint.shader = null; paint.color = Color.argb(90, 0, 0, 0)
+        if (fa > 0.001f && !ambientOpen) { val k = 1f + 0.05f * fa; c.translate(x + w / 2, y + h / 2); c.scale(k, k); c.translate(-(x + w / 2), -(y + h / 2)) }
+        if (fa > 0.001f && !ambientOpen) {
+            paint.style = Paint.Style.FILL; paint.shader = null; paint.color = Color.argb((90 * fa).toInt(), 0, 0, 0)
             rect.set(x, y + 12 * u, x + w, y + h + 12 * u); c.drawRoundRect(rect, r, r, paint)
-            paint.style = Paint.Style.STROKE; paint.strokeWidth = 3 * u; paint.color = ringColor
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = 3 * u; paint.color = ringColor; paint.alpha = (255 * fa).toInt()
             rect.set(x - 1.5f * u, y - 1.5f * u, x + w + 1.5f * u, y + h + 1.5f * u); c.drawRoundRect(rect, r + 1.5f * u, r + 1.5f * u, paint)
             paint.style = Paint.Style.FILL
         }

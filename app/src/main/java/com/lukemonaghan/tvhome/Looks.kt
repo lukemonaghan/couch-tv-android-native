@@ -57,6 +57,10 @@ class Looks(private val ctx: Context, private val prefs: SharedPreferences) {
         set(v) { prefs.edit().putInt("roundness", v.coerceIn(0, 2)).apply() }
     val scrimAlpha get() = intArrayOf(70, 115, 165)[cardDark]
     val radiusK get() = floatArrayOf(0.55f, 1f, 1.45f)[roundness]
+    /** Animation speed: android (follow Android), slow, normal, fast or off. */
+    var motion: String
+        get() = prefs.getString("motion", "android") ?: "android"
+        set(v) { prefs.edit().putString("motion", v).apply() }
     var glassIcons: Boolean
         get() = bool("glassIcons", false)
         set(v) = put("glassIcons", v)
@@ -67,7 +71,7 @@ class Looks(private val ctx: Context, private val prefs: SharedPreferences) {
         get() = bool("clockLiquid", false)
         set(v) = put("clockLiquid", v)
     var movingTiles: Boolean
-        get() = if (lighter) false else if (prefs.contains("movingTiles")) bool("movingTiles", false) else false   // the web home turns it on by default; here it is off until chosen: it redraws the whole home about 25 times a second
+        get() = if (lighter || Motion.off(prefs)) false else if (prefs.contains("movingTiles")) bool("movingTiles", false) else false   // the web home turns it on by default; here it is off until chosen: it redraws the whole home about 25 times a second
         set(v) = put("movingTiles", v)
     var keepPhoto: Boolean
         get() = bool("keepPhoto", false)

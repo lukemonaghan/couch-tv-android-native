@@ -71,7 +71,7 @@ class AmbientFx(private val prefs: SharedPreferences, private val weather: Weath
     private val STORM = setOf(95, 96, 99)
 
     private fun lighter() = prefs.getBoolean("lighter", false)
-    val particlesOn get() = prefs.getBoolean("wx_fx", false) && prefs.getBoolean("weatherOn", true) && !lighter()
+    val particlesOn get() = !Motion.off(prefs) && prefs.getBoolean("wx_fx", false) && prefs.getBoolean("weatherOn", true) && !lighter()
     val sunOn get() = prefs.getBoolean("wx_sun", true) && !lighter()
 
     private fun typeNow(): String {

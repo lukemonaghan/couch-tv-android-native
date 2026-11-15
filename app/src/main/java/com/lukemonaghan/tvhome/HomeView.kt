@@ -115,7 +115,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // The dock after the apps: the Smart home tile (only when Home Assistant is set up), Settings, More apps.
     private fun smartIdx() = if (Plat.smartAvailable()) store.line else -1
     private fun gearIdx() = store.line + (if (smartIdx() >= 0) 1 else 0)
-    private fun dockSlots() = gearIdx() + 2
+    private fun dockSlots() = gearIdx() + 1   // the apps, Smart home, then Settings; More apps opens with Down, it has no tile
     private val main = Handler(Looper.getMainLooper())
 
     // quick buttons beyond Sleep and Look, and what Keep watching adds (QuickSystem.kt, HomeOverlays.kt)
@@ -129,7 +129,29 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private var noteText = ""; private var noteUntil = 0L      // a failed quick button, under the buttons
     private var toastText = ""; private var toastUntil = 0L    // a short confirmation at the top
 
+    init { Motion.init(ctx) }
     private val ground = Color.parseColor("#0D1E19")
+
+    // ---- movement: focus eases in and out, screens fade (Motion.kt sets the speed; "No motion" jumps)
+    private val focusAmt = HashMap<Int, Float>()
+    private var animLast = 0L
+    private var frameMs = 16L
+    private var animBusy = false
+    private var fadeKey = 0
+    private var fadeAt = 0L
+
+    /** How focused the thing with this [key] is, 0 to 1, moved a step towards [target] each frame and eased (slow at the ends). */
+    private fun anim(key: Int, target: Boolean): Float {
+        val goal = if (target) 1f else 0f
+        val cur = focusAmt[key] ?: goal
+        if (cur == goal) return eased(cur)
+        val dur = Motion.ms(prefs, 160)
+        val next = if (dur <= 0L) goal else if (goal > cur) minOf(goal, cur + frameMs.toFloat() / dur) else maxOf(goal, cur - frameMs.toFloat() / dur)
+        focusAmt[key] = next
+        if (next != goal) animBusy = true
+        return eased(next)
+    }
+    private fun eased(t: Float): Float { val k = 1f - t; return 1f - k * k * k }
     /** OLED and Dark: a solid colour, no scene. */
     private val solid get() = look == Look.OLED || look == Look.DARK
     private val ink = Color.WHITE
@@ -440,6 +462,17 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         invalidate()
     }
 
+    /** OK on Settings: a short list under the button, our own settings or Android's. */
+    private fun settingsMenu() {
+        val u = height / 1080f
+        val right = width - 80 * u
+        val top = if (look == Look.NIGHT) height - 46 * u - 88 * u else height - 220 * u
+        ListMenu.show(context, right, top, listOf("App settings", "Android settings"), 0, true) { i ->
+            if (i == 0) { settings.open(); mode = Mode.SETTINGS; invalidate() }
+            else if (!quickSys.openTvSettings()) note("Could not open the TV's settings.")
+        }
+    }
+
     private fun openMore(at: Int) {
         dockReturn = fi
         mi = at.coerceIn(0, maxOf(0, store.items.size - 1))
@@ -453,7 +486,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Mode.DOCK -> when {
                 fi < store.line -> launch(store.items[fi])
                 fi == smartIdx() -> { smart.open(); mode = Mode.SMART; invalidate() }
-                fi == gearIdx() -> { settings.open(); mode = Mode.SETTINGS; invalidate() }
+                fi == gearIdx() -> settingsMenu()
                 else -> { openMore(0); invalidate() }
             }
             Mode.SETTINGS -> settings.key(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -697,13 +730,23 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     override fun onDraw(c: Canvas) {
         looks.motionDrawn = false
         if (idle.coversHome()) { idle.drawOver(c, width, height); return }   // the ambient clock or the dark screen: nothing underneath to draw
+        val now = android.os.SystemClock.uptimeMillis()
+        frameMs = if (animLast == 0L) 16L else (now - animLast).coerceIn(4L, 50L); animLast = now
+        animBusy = false
+        // a whole screen coming up (More apps, Settings, Smart home, kids, the music view) fades in; the home itself does not
+        val sk = when { np.ambientOpen -> 4; mode == Mode.MORE -> 1; mode == Mode.SETTINGS -> 2; mode == Mode.SMART -> 3; mode == Mode.KIDS -> 5; else -> 0 }
+        if (sk != fadeKey) { fadeKey = sk; fadeAt = now }
+        val fd = Motion.ms(prefs, 220)
+        val fadeF = if (fd <= 0L) 1f else ((now - fadeAt).toFloat() / fd).coerceIn(0f, 1f)
         val shift = look == Look.OLED && mode != Mode.SETTINGS
         if (shift) { val u = height / 1080f; c.save(); c.translate(looks.shiftX(u), looks.shiftY(u)) }
+        if (fadeF < 1f) { c.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (eased(fadeF) * 255).toInt()); animBusy = true }
         drawHome(c)
+        if (fadeF < 1f) c.restore()
         if (shift) c.restore()
         idle.drawOver(c, width, height)
         val fading = looks.drawBedtime(c, width, height, paint)
-        if (fading || looks.motionDrawn) postInvalidateDelayed(40)
+        if (animBusy) postInvalidateOnAnimation() else if (fading || looks.motionDrawn) postInvalidateDelayed(40)
     }
 
     private fun drawHome(c: Canvas) {
@@ -720,7 +763,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             val b = sceneBmp
             val pv = prevBmp
             if (pv != null && b != null) {
-                val f = ((android.os.SystemClock.uptimeMillis() - fadeStart) / 1600f).coerceIn(0f, 1f)
+                val sd = Motion.ms(prefs, 1600); val f = if (sd <= 0L) 1f else ((android.os.SystemClock.uptimeMillis() - fadeStart).toFloat() / sd).coerceIn(0f, 1f)
                 c.drawBitmap(pv, 0f, 0f, null)
                 paint.alpha = (f * 255).toInt(); c.drawBitmap(b, 0f, 0f, paint); paint.alpha = 255
                 if (f >= 1f) { pv.recycle(); prevBmp = null } else postInvalidateOnAnimation()
@@ -743,6 +786,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else { drawTop(c, u); drawCards(c, u); drawDock(c, u) }; drawMenu(c, u) }
                 else -> { drawTop(c, u); drawCards(c, u); drawDock(c, u) }
             }
+            np.fa = anim(2000, np.focused && mode == Mode.NP)
             if (!moreShown) np.draw(c, u, look == Look.NIGHT, width, ::glass)
             if (ra < 1f) c.restore()
         }
@@ -787,8 +831,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private fun drawDock(c: Canvas, u: Float) {
         if (look != Look.NIGHT) { drawHomeGrid(c, u); return }
         // couch-tv's Night dock: a glass pill, 7 rem icons 1.625 rem apart, 2.875 rem off the bottom
-        val n = dockSlots()
-        val fit = minOf(1f, (width - 80 * u) / (n * 138 * u + 30 * u))
+        val n = dockSlots() - 1   // the apps (and Smart home), centred; Settings sits bottom right on its own
+        val fit = minOf(1f, (width - 360 * u) / (n * 138 * u + 30 * u))
         val tw = 112 * u * fit; val gap = 26 * u * fit
         val padX = 28 * u * fit; val padY = 22 * u * fit
         val pw = n * tw + (n - 1) * gap + 2 * padX
@@ -801,6 +845,9 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             if ((i == focus) != (pass == 1)) continue
             nightIcon(c, u, pl + padX + i * (tw + gap), pt + padY, tw, i, i == focus, mode == Mode.MOVING)
         }
+        // Settings: its own round button in the bottom right corner
+        val gs = 88 * u
+        nightIcon(c, u, width - 80 * u - gs, height - 46 * u - gs, gs, gearIdx(), gearIdx() == focus, false)
     }
 
     /** Night's top row: the people switch at 80, 60 and the round quick buttons at the right edge. */
@@ -949,21 +996,21 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             if (focused != (pass == 1)) continue
             val x = 80 * u + np.slotWidth(u) + (i - first) * (cw + gap)
             if (x > width) continue
-            drawCard(c, u, list[i], x, top, cw, ch, focused)
+            drawCard(c, u, list[i], x, top, cw, ch, focused, anim(1000 + i, focused))
         }
     }
 
     private val cardBlur = HashMap<String, Pair<Bitmap, Bitmap>>()
 
-    private fun drawCard(c: Canvas, u: Float, card: Card, x: Float, y: Float, w: Float, h: Float, focused: Boolean) {
+    private fun drawCard(c: Canvas, u: Float, card: Card, x: Float, y: Float, w: Float, h: Float, focused: Boolean, am: Float) {
         c.save()
-        if (focused) { c.translate(x + w / 2, y + h / 2); c.scale(1.05f, 1.05f); c.translate(-(x + w / 2), -(y + h / 2)) }
+        if (am > 0.001f) { val k = 1f + 0.05f * am; c.translate(x + w / 2, y + h / 2); c.scale(k, k); c.translate(-(x + w / 2), -(y + h / 2)) }
         val r = 30 * u * looks.radiusK
-        if (focused) {
-            paint.style = Paint.Style.FILL; paint.color = Color.argb(90, 0, 0, 0)
+        if (am > 0.001f) {
+            paint.style = Paint.Style.FILL; paint.color = Color.argb((90 * am).toInt(), 0, 0, 0)
             rect.set(x, y + 12 * u, x + w, y + h + 12 * u)
             c.drawRoundRect(rect, r, r, paint)
-            paint.color = ink
+            paint.color = ink; paint.alpha = (255 * am).toInt()
             rect.set(x - 3 * u, y - 3 * u, x + w + 3 * u, y + h + 3 * u)
             c.drawRoundRect(rect, r + 3 * u, r + 3 * u, paint)
         }
@@ -1025,15 +1072,16 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val radius = size * 0.265f
         // glass app icons: the app's glyph on a glass tile; the focused app shows its own colours unless "Stays glass"
         val glassy = looks.glassIcons && app != null && (!focused || looks.glassFocusStay)
+        val am = anim(index, focused)   // 0 to 1: the lift and ring ease in and out
         c.save()
         val cx = x + size / 2; val cy = y + size / 2
-        if (focused) { c.translate(cx, cy - 10 * u * (size / (112 * u))); c.scale(1.16f, 1.16f); c.translate(-cx, -cy); looks.sway(c, cx, cy) }
+        if (am > 0.001f) { val k = 1f + 0.16f * am; c.translate(cx, cy - 10 * u * am * (size / (112 * u))); c.scale(k, k); c.translate(-cx, -cy); if (focused) looks.sway(c, cx, cy) }
         rect.set(x, y, x + size, y + size)
-        if (focused && !glassy) {   // the white ring and its shadow
-            softShadow(c, rect, radius, 18 * u, 22 * u, if (app != null) 110 else 40)
+        if (am > 0.001f && !glassy) {   // the white ring and its shadow
+            softShadow(c, rect, radius, 18 * u, 22 * u, ((if (app != null) 110 else 40) * am).toInt())
             // a ring, not a white disc, so the Settings and More apps glass tiles stay see-through inside it
             rect.set(x - 2 * u, y - 2 * u, x + size + 2 * u, y + size + 2 * u)
-            paint.style = Paint.Style.STROKE; paint.strokeWidth = 4 * u; paint.color = ink; paint.alpha = 255
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = 4 * u; paint.color = ink; paint.alpha = (255 * am).toInt()
             c.drawRoundRect(rect, radius + 2 * u, radius + 2 * u, paint)
             paint.style = Paint.Style.FILL
             rect.set(x, y, x + size, y + size)

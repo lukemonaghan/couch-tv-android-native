@@ -54,6 +54,14 @@ class LookSettings(private val ctx: Context, private val prefs: SharedPreference
             "${Looks.AMOUNT_NAMES[looks.amount - 1]} (${looks.amount}/5)") { looks.amount = looks.amount % 5 + 1 })
         r.add(LookRow("Clock style", "", if (looks.clockLiquid) "Liquid glass" else "Frosted") { looks.clockLiquid = !looks.clockLiquid })
 
+        r.add(LookRow("MOTION", header = true))
+        val modes = listOf("android" to "Follow Android", "slow" to "Slow", "normal" to "Normal", "fast" to "Fast", "off" to "No motion")
+        r.add(LookRow("Animation speed", "How fast the home moves between tiles and screens. Follow Android uses the TV's own animation scale; No motion jumps with no animation at all",
+            modes.firstOrNull { it.first == looks.motion }?.second ?: "Follow Android") {
+            val i = modes.indexOfFirst { it.first == looks.motion }.coerceAtLeast(0)
+            looks.motion = modes[(i + 1) % modes.size].first
+        })
+
         r.add(LookRow("BEDTIME", header = true))
         r.add(LookRow("Bedtime dimming", "An amber dimming over the last 15 minutes of the sleep timer", check = looks.bedtimeDim) { looks.bedtimeDim = !looks.bedtimeDim })
 
