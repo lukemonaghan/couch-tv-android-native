@@ -440,74 +440,96 @@ class NowPlaying(
         }
 
         if (vizLive && ov <= 0.01f) { c.restoreToCount(layer.takeIf { it >= 0 } ?: c.saveCount); toast(c, w, h, u); if (t.playing) viz.start() else viz.stop(); return }
-        val artS = 400 * u; val gap = 80 * u; val metaW = 640 * u
-        val left = (w - (artS + gap + metaW)) / 2f
-        val top = (h - artS) / 2f - 110 * u   // lifted by a third of the space above, so the lyrics have room below
-        if (vizLive) {   // a half-clear dark card behind the cover, words and buttons so they read on any preset
-            paint.style = Paint.Style.FILL; paint.color = Color.argb(128, 0, 0, 0); paint.shader = null
-            rect.set(left - 48 * u, top - 48 * u, left + artS + gap + metaW + 48 * u, top + artS + 64 * u)
-            c.drawRoundRect(rect, 44 * u, 44 * u, paint)
-        }
-        // the record behind the cover, peeking out on the right
-        val vr = 184 * u
-        val vcx = left + artS + 48 * u - vr; val vcy = top + 16 * u + vr
-        paint.color = Color.rgb(8, 8, 8); c.drawCircle(vcx, vcy, vr, paint)
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = 2 * u; paint.color = Color.argb(70, 70, 70, 76)
-        for (f in intArrayOf(45, 60, 75, 90)) c.drawCircle(vcx, vcy, vr * f / 100f, paint)
-        paint.style = Paint.Style.FILL
-        art(c, art, left, top, artS, 32 * u)
-
-        val mx = left + artS + gap
-        var y = top + 8 * u
-        text.textAlign = Paint.Align.LEFT; text.letterSpacing = 0.08f
-        text.typeface = Fonts.semibold(ctx); text.textSize = 18 * u
-        val appW = text.measureText(t.app.uppercase()) + 32 * u
-        rect.set(mx, y, mx + appW, y + 36 * u); paint.color = Color.argb(26, 255, 255, 255)
-        c.drawRoundRect(rect, 18 * u, 18 * u, paint)
-        text.color = Color.argb(166, 255, 255, 255); c.drawText(t.app.uppercase(), mx + 16 * u, y + 25 * u, text)
-        text.letterSpacing = 0f
-        y += 36 * u + 20 * u
-        text.typeface = Fonts.semibold(ctx); text.textSize = 52 * u; text.color = Color.WHITE
-        val title = TextUtils.ellipsize(t.title, text, metaW, TextUtils.TruncateAt.END)
-        c.drawText(title, 0, title.length, mx, y + 48 * u, text)
-        y += 62 * u + 8 * u
-        text.typeface = Fonts.regular(ctx); text.textSize = 30 * u; text.color = Color.argb(204, 255, 255, 255)
-        val sub = TextUtils.ellipsize(listOf(t.artist, t.album).filter { it.isNotEmpty() }.joinToString("  ·  "), text, metaW, TextUtils.TruncateAt.END)
-        c.drawText(sub, 0, sub.length, mx, y + 30 * u, text)
-        y += 48 * u + 32 * u
-        // the equaliser: the real spectrum of what is playing, across the whole width (a gentle pattern when the TV does not allow it)
+        // The layout: the middle of the screen is left clear for the visualiser. The cover sits bottom left, the words bottom right,
+        // a full-width progress bar runs along the bottom with the buttons centred under it, and the lyrics go top right.
         val now = SystemClock.uptimeMillis()
         if (t.playing) viz.start() else viz.stop()
-        val n = AudioViz.BANDS; val eqH = if (vizLive) 0f else 52 * u
-        val slot = metaW / n; val bw = slot * 0.62f
-        paint.color = Color.argb(150, 255, 255, 255)
-        if (!vizLive) for (i in 0 until n) {
-            val lv = if (viz.live) viz.bands[i] else if (t.playing) (0.18f + 0.5f * (0.5f + 0.5f * sin(now / 260.0 + i * 0.7)).toFloat() * (0.5f + 0.5f * sin(now / 900.0 + i * 0.3)).toFloat()) else 0.06f
-            val hh = (eqH * lv.coerceIn(0.05f, 1f))
-            val bx0 = mx + i * slot
-            rect.set(bx0, y + eqH - hh, bx0 + bw, y + eqH)
-            c.drawRoundRect(rect, bw / 2, bw / 2, paint)
+        val m = 28 * u
+        val barY = h - 134 * u
+        val btnY = h - 66 * u
+        val artS = 400 * u
+        val coverBottom = barY - 40 * u
+        val artTop = coverBottom - artS
+        fun panel(l: Float, tp: Float, r: Float, b: Float, rad: Float) {
+            if (!vizLive) return   // a half-clear dark card behind each group so it reads on any preset
+            paint.style = Paint.Style.FILL; paint.color = Color.argb(128, 0, 0, 0); paint.shader = null
+            rect.set(l, tp, r, b); c.drawRoundRect(rect, rad, rad, paint)
         }
-        y += if (vizLive) 0f else eqH + 24 * u
-        // progress: elapsed, a bar, total (the position is the last read plus the time since)
+        // the cover
+        panel(m - 14 * u, artTop - 14 * u, m + artS + 14 * u, coverBottom + 6 * u, 36 * u)
+        paint.style = Paint.Style.FILL
+        art(c, art, m, artTop, artS, 32 * u)
+
+        // the words, right aligned, ending level with the bottom of the cover
+        val maxMeta = w - (m + artS + 120 * u) - m - 52 * u
+        text.letterSpacing = 0.08f; text.typeface = Fonts.semibold(ctx); text.textSize = 18 * u
+        val tagText = t.app.uppercase()
+        val tagW = text.measureText(tagText) + 32 * u
+        text.letterSpacing = 0f
+        text.typeface = Fonts.semibold(ctx); text.textSize = 52 * u
+        val title = TextUtils.ellipsize(t.title, text, maxMeta, TextUtils.TruncateAt.END)
+        val titleW = text.measureText(title, 0, title.length)
+        text.typeface = Fonts.regular(ctx); text.textSize = 30 * u
+        val sub = TextUtils.ellipsize(listOf(t.artist, t.album).filter { it.isNotEmpty() }.joinToString("  ·  "), text, maxMeta, TextUtils.TruncateAt.END)
+        val subW = text.measureText(sub, 0, sub.length)
+        val metaW = maxOf(titleW, subW, tagW)
+        val right = w - m - 26 * u
+        val artistBase = coverBottom - 12 * u
+        val titleBase = artistBase - 56 * u
+        val tagBottom = titleBase - 52 * u - 6 * u
+        panel(right - metaW - 26 * u, tagBottom - 36 * u - 22 * u, right + 26 * u, coverBottom + 6 * u, 36 * u)
+        text.textAlign = Paint.Align.RIGHT
+        text.typeface = Fonts.regular(ctx); text.textSize = 30 * u; text.color = Color.argb(204, 255, 255, 255)
+        c.drawText(sub, 0, sub.length, right, artistBase, text)
+        text.typeface = Fonts.semibold(ctx); text.textSize = 52 * u; text.color = Color.WHITE
+        c.drawText(title, 0, title.length, right, titleBase, text)
+        text.textAlign = Paint.Align.LEFT; text.letterSpacing = 0.08f; text.typeface = Fonts.semibold(ctx); text.textSize = 18 * u
+        rect.set(right - tagW, tagBottom - 36 * u, right, tagBottom); paint.color = Color.argb(26, 255, 255, 255)
+        c.drawRoundRect(rect, 18 * u, 18 * u, paint)
+        text.color = Color.argb(166, 255, 255, 255); c.drawText(tagText, right - tagW + 16 * u, tagBottom - 11 * u, text)
+        text.letterSpacing = 0f
+
+        // the equaliser (only without the visualiser, which replaces it): between the cover and the words, along the bottom of that band
+        if (!vizLive) {
+            val ex0 = m + artS + 70 * u; val ex1 = right - metaW - 70 * u
+            if (ex1 - ex0 > 240 * u) {
+                val n = AudioViz.BANDS; val eqH = 110 * u
+                val slot = (ex1 - ex0) / n; val bw = slot * 0.62f
+                paint.color = Color.argb(150, 255, 255, 255)
+                for (i in 0 until n) {
+                    val lv = if (viz.live) viz.bands[i] else if (t.playing) (0.18f + 0.5f * (0.5f + 0.5f * sin(now / 260.0 + i * 0.7)).toFloat() * (0.5f + 0.5f * sin(now / 900.0 + i * 0.3)).toFloat()) else 0.06f
+                    val hh = (eqH * lv.coerceIn(0.05f, 1f))
+                    rect.set(ex0 + i * slot, coverBottom - hh, ex0 + i * slot + bw, coverBottom)
+                    c.drawRoundRect(rect, bw / 2, bw / 2, paint)
+                }
+            }
+        }
+
+        // the bottom band: progress, then the buttons, then the hints on the left
+        panel(14 * u, barY - 34 * u, w - 14 * u, h - 12 * u, 36 * u)
         val pos = if (t.playing) t.position + (now - lastReadAt()) else t.position
-        text.textSize = 18 * u; text.color = Color.argb(179, 255, 255, 255)
-        c.drawText(fmt(pos), mx, y + 15 * u, text)
-        val barL = mx + 70 * u; val barR = mx + metaW - (if (t.duration > 0) 70 * u else 0f)
-        rect.set(barL, y + 4 * u, barR, y + 14 * u); paint.color = Color.argb(38, 255, 255, 255)
+        text.typeface = Fonts.regular(ctx); text.textSize = 20 * u; text.color = Color.argb(179, 255, 255, 255)
+        c.drawText(fmt(pos), m + 10 * u, barY + 7 * u, text)
+        val barL = m + 100 * u; val barR = w - m - (if (t.duration > 0) 100 * u else 10 * u)
+        rect.set(barL, barY - 5 * u, barR, barY + 5 * u); paint.color = Color.argb(38, 255, 255, 255)
         c.drawRoundRect(rect, 5 * u, 5 * u, paint)
         val frac = if (t.duration > 0) (pos.toFloat() / t.duration).coerceIn(0f, 1f) else if (pos > 0) 0.4f else 0f
-        if (frac > 0f) { rect.set(barL, y + 4 * u, barL + (barR - barL) * frac, y + 14 * u); paint.color = Color.WHITE; c.drawRoundRect(rect, 5 * u, 5 * u, paint) }
-        if (t.duration > 0) { text.textAlign = Paint.Align.RIGHT; c.drawText(fmt(t.duration), mx + metaW, y + 15 * u, text); text.textAlign = Paint.Align.LEFT }
-        y += 14 * u + 32 * u
-        // buttons: previous, play or pause (bigger), next, and the app's name
-        var bx = mx
+        if (frac > 0f) { rect.set(barL, barY - 5 * u, barL + (barR - barL) * frac, barY + 5 * u); paint.color = Color.WHITE; c.drawRoundRect(rect, 5 * u, 5 * u, paint) }
+        if (t.duration > 0) { text.textAlign = Paint.Align.RIGHT; text.color = Color.argb(179, 255, 255, 255); c.drawText(fmt(t.duration), w - m - 10 * u, barY + 7 * u, text); text.textAlign = Paint.Align.LEFT }
+
+        // buttons: previous, play or pause (bigger), next, stop, ..., and the app's name, centred under the bar
         val all = items()
         val kinds = all.dropLast(1).map { if (it == "play") (if (t.playing) "pause" else "play") else it }
+        text.typeface = Fonts.semibold(ctx); text.textSize = 18 * u
+        val ow = text.measureText(t.app) + 48 * u
+        var total = ow
+        for (i in kinds.indices) total += 2 * (if (i == 1) 40 else 34) * u + 24 * u
+        var bx = (w - total) / 2f
+        val btnLeft = bx
         for ((i, k) in kinds.withIndex()) {
             val r = (if (i == 1) 40 else 34) * u
             val f = ambBtn == i
-            val cx = bx + r; val cy = y + 40 * u
+            val cx = bx + r; val cy = btnY
             c.save(); if (f) { c.translate(cx, cy); c.scale(1.12f, 1.12f); c.translate(-cx, -cy) }
             paint.color = if (f) Color.WHITE else Color.argb(if (i == 1) 51 else 26, 255, 255, 255)
             c.drawCircle(cx, cy, r, paint)
@@ -515,19 +537,24 @@ class NowPlaying(
             c.restore()
             bx += 2 * r + 24 * u
         }
-        val open = t.app
-        text.typeface = Fonts.semibold(ctx); text.textSize = 18 * u
-        val ow = text.measureText(open) + 48 * u
         val f = ambBtn == all.size - 1
-        rect.set(bx, y + 40 * u - 34 * u, bx + ow, y + 40 * u + 34 * u)
+        rect.set(bx, btnY - 34 * u, bx + ow, btnY + 34 * u)
         paint.color = if (f) Color.WHITE else Color.argb(26, 255, 255, 255)
         c.drawRoundRect(rect, 34 * u, 34 * u, paint)
         text.color = if (f) Color.rgb(10, 10, 15) else Color.WHITE
-        c.drawText(open, bx + 24 * u, y + 46 * u, text)
-        text.color = Color.argb(140, 255, 255, 255); text.textSize = 18 * u
-        c.drawText("▼ Press Down or Back for apps", mx, y + 120 * u, text)
-        if (vizLive && vizName.isNotEmpty()) { text.textSize = 16 * u; text.color = Color.argb(110, 255, 255, 255); c.drawText("Preset: " + TextUtils.ellipsize(vizName, text, metaW, TextUtils.TruncateAt.END), mx, y + 148 * u, text) }
-        else if (!vizLive && ProjectM.available && prefs.getBoolean("np_viz", true) && !PresetStore.ready(ctx)) { text.textSize = 16 * u; text.color = Color.argb(110, 255, 255, 255); c.drawText("Music visualiser: get presets in Settings", mx, y + 148 * u, text) }
+        c.drawText(t.app, bx + 24 * u, btnY + 6 * u, text)
+        // hints, bottom left of the band (clear of the buttons)
+        val hintW = btnLeft - (m + 10 * u) - 30 * u
+        text.typeface = Fonts.regular(ctx); text.textSize = 18 * u; text.color = Color.argb(150, 255, 255, 255)
+        val hint = TextUtils.ellipsize("▼ Press Down or Back for apps", text, hintW, TextUtils.TruncateAt.END)
+        c.drawText(hint, 0, hint.length, m + 10 * u, btnY - 6 * u, text)
+        val line2 = if (vizLive && vizName.isNotEmpty()) "Preset: $vizName"
+            else if (!vizLive && ProjectM.available && prefs.getBoolean("np_viz", true) && !PresetStore.ready(ctx)) "Music visualiser: get presets in Settings" else ""
+        if (line2.isNotEmpty()) {
+            text.textSize = 16 * u; text.color = Color.argb(120, 255, 255, 255)
+            val l2 = TextUtils.ellipsize(line2, text, hintW, TextUtils.TruncateAt.END)
+            c.drawText(l2, 0, l2.length, m + 10 * u, btnY + 22 * u, text)
+        }
         if (lyricsOn) drawLyrics(c, w, h, u, pos)
         text.color = Color.WHITE
         if (layer >= 0) c.restoreToCount(layer)
@@ -561,28 +588,42 @@ class NowPlaying(
         text.clearShadowLayer()
     }
 
-    /** Three lines of the synced lyrics along the bottom: the one before, the one being sung, the next. */
+    /** The synced lyrics, top right: the line before, the one being sung, the next. Plain lyrics move along with the song. */
     private fun drawLyrics(c: Canvas, w: Int, h: Int, u: Float, pos: Long) {
         val res = lyr
+        class Ln(val s: CharSequence, val size: Float, val alpha: Int, val bold: Boolean)
+        val m = 28 * u
+        val maxW = w * 0.62f
+        val out = ArrayList<Ln>()
+        fun add(raw: String?, size: Float, alpha: Int, bold: Boolean) {
+            val t = raw?.takeIf { it.isNotBlank() } ?: return
+            text.typeface = if (bold) Fonts.semibold(ctx) else Fonts.regular(ctx); text.textSize = size * u
+            out.add(Ln(TextUtils.ellipsize(t, text, maxW, TextUtils.TruncateAt.END), size, alpha, bold))
+        }
         if (res == null) {
-            if (lyrDone) { text.textAlign = Paint.Align.CENTER; text.typeface = Fonts.regular(ctx); text.textSize = 24 * u; text.color = Color.argb(110, 255, 255, 255); c.drawText("No lyrics found for this song", w / 2f, h - 110 * u, text); text.textAlign = Paint.Align.LEFT }
-            return
+            if (!lyrDone) return
+            add("No lyrics found for this song", 22f, 120, false)
+        } else {
+            val l = res.lines
+            val i = l.indexOfLast { it.ms <= pos }
+            add(l.getOrNull(i - 1)?.text, 26f, 110, false)
+            add(l.getOrNull(i)?.text, 40f, 255, true)
+            add(l.getOrNull(i + 1)?.text, 26f, 140, false)
+            if (!res.synced) add("Lyrics are not timed for this song", 16f, 100, false)
         }
-        val l = res.lines
-        var i = l.indexOfLast { it.ms <= pos }
-        if (i < 0) i = -1
-        text.textAlign = Paint.Align.CENTER; text.letterSpacing = 0f
-        val maxW = w - 240 * u
-        fun row(idx: Int, y: Float, size: Float, alpha: Int, bold: Boolean) {
-            val t = l.getOrNull(idx)?.text?.takeIf { it.isNotBlank() } ?: return
-            text.typeface = if (bold) Fonts.semibold(ctx) else Fonts.regular(ctx); text.textSize = size * u; text.color = Color.argb(alpha, 255, 255, 255)
-            val e = TextUtils.ellipsize(t, text, maxW, TextUtils.TruncateAt.END)
-            c.drawText(e, 0, e.length, w / 2f, y, text)
+        if (out.isEmpty()) return
+        var cw = 0f; var ch = 0f
+        for (ln in out) { text.typeface = if (ln.bold) Fonts.semibold(ctx) else Fonts.regular(ctx); text.textSize = ln.size * u; cw = maxOf(cw, text.measureText(ln.s, 0, ln.s.length)); ch += ln.size * u * 1.55f }
+        val right = w - m - 26 * u
+        if (vizLive) { paint.style = Paint.Style.FILL; paint.color = Color.argb(128, 0, 0, 0); paint.shader = null; rect.set(right - cw - 26 * u, m, right + 26 * u, m + ch + 26 * u); c.drawRoundRect(rect, 30 * u, 30 * u, paint) }
+        text.textAlign = Paint.Align.RIGHT; text.letterSpacing = 0f
+        var y = m + 12 * u
+        for (ln in out) {
+            y += ln.size * u * 1.2f
+            text.typeface = if (ln.bold) Fonts.semibold(ctx) else Fonts.regular(ctx); text.textSize = ln.size * u; text.color = Color.argb(ln.alpha, 255, 255, 255)
+            c.drawText(ln.s, 0, ln.s.length, right, y, text)
+            y += ln.size * u * 0.35f
         }
-        row(i - 1, h - 190 * u, 28f, 100, false)
-        row(i, h - 130 * u, 44f, 255, true)
-        row(i + 1, h - 74 * u, 28f, 130, false)
-        if (!res.synced) { text.typeface = Fonts.regular(ctx); text.textSize = 16 * u; text.color = Color.argb(90, 255, 255, 255); c.drawText("Lyrics are not timed for this song: the lines move along with it", w / 2f, h - 30 * u, text) }
         text.textAlign = Paint.Align.LEFT
     }
 
