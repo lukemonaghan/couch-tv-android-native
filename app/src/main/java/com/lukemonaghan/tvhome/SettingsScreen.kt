@@ -70,6 +70,9 @@ class SettingsScreen(
                 Row("Night", "Glass clock over the scene, Keep watching and a dock", check = look == "NIGHT") { pick("NIGHT") },
                 Row("OLED", "Pure black, a grid of your apps", check = look == "OLED") { pick("OLED") },
                 Row("Classic", "One photo and a grid of app banners", check = look == "CLASSIC") { pick("CLASSIC") },
+                Row("Follow the time of day", "Dawn, day, sunset and night pick the scene and photo", check = prefs.getBoolean("timeSync", true)) {
+                    prefs.edit().putBoolean("timeSync", !prefs.getBoolean("timeSync", true)).apply()
+                },
                 Row("SCENES", header = true),
             ) + SceneRenderer.ALL.map { sp ->
                 val on = enabledScenes()

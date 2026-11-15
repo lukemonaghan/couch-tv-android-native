@@ -114,13 +114,61 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val on = prefs.getString("scenes", null)?.split(',')
         return SceneRenderer.ALL.filter { on == null || it.id in on }.ifEmpty { listOf(SceneRenderer.NIGHT) }
     }
-    private fun scene(): SceneRenderer.Spec = scenes().let { it[sceneIdx % it.size] }
+    private fun timeSync() = prefs.getBoolean("timeSync", true)
+
+    /** The scene now: following the time of day (the sun where the weather place is set, else the hour), or the rotation's turn. */
+    private fun scene(): SceneRenderer.Spec {
+        val list = scenes()
+        if (!timeSync() || list.size < 2) return list[sceneIdx % list.size]
+        val want = sunScene(Calendar.getInstance())
+        fun pick(vararg order: String) = order.firstNotNull { id -> list.firstOrNull { it.id == id } } ?: list[0]
+        return when (want) {
+            "dawn" -> pick("dawn", "golden", "water", "fog", "night")
+            "golden" -> pick("golden", "dawn", "water", "fog", "night")
+            "fog" -> pick("fog", "water", "golden", "dawn", "night")
+            "water" -> pick("water", "fog", "golden", "dawn", "night")
+            else -> pick("night", "fog", "water", "golden", "dawn")
+        }
+    }
+    private inline fun <T> Array<out String>.firstNotNull(f: (String) -> T?): T? { for (x in this) f(x)?.let { return it }; return null }
+
+    /** Which scene suits the sky: couch-tv's sun sync. Below -6 degrees night; low sun dawn (morning) or golden (evening); daytime water, or fog when it is grey or wet. */
+    private fun sunScene(cal: Calendar): String {
+        val lat = prefs.getFloat("lat", 0f).toDouble(); val lon = prefs.getFloat("lon", 0f).toDouble()
+        if (!weather.hasPlace) {
+            val h = cal.get(Calendar.HOUR_OF_DAY)
+            return if (h in 5..7) "dawn" else if (h in 8..15) "water" else if (h in 16..18) "golden" else "night"
+        }
+        val doy = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply { timeInMillis = cal.timeInMillis }.get(Calendar.DAY_OF_YEAR)
+        val b = Math.toRadians(360 / 365.25 * (doy - 81))
+        val eot = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b)
+        val decl = Math.toRadians(23.45 * Math.sin(b))
+        val utc = (cal.timeInMillis % 86400000L) / 3600000.0
+        val hourAngle = Math.toRadians(((utc + lon / 15 + eot / 60 + 24) % 24 - 12) * 15)
+        val la = Math.toRadians(lat)
+        val alt = Math.toDegrees(Math.asin((Math.sin(la) * Math.sin(decl) + Math.cos(la) * Math.cos(decl) * Math.cos(hourAngle)).coerceIn(-1.0, 1.0)))
+        return when {
+            alt < -6 -> "night"
+            alt < 10 -> if (hourAngle < 0) "dawn" else "golden"
+            weather.code in intArrayOf(3, 45, 48, 51, 53, 55, 61, 63, 65, 80, 81, 82) -> "fog"
+            else -> "water"
+        }
+    }
+
+    /** Classic's photo now: sunrise in the morning, green by day, sunsets in the evening (couch-tv's own hours), or the rotation's turn. */
+    private fun photo(): SceneRenderer.Photo {
+        val n = SceneRenderer.PHOTOS.size
+        if (!timeSync()) return SceneRenderer.PHOTOS[photoIdx % n]
+        val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val i = when { h in 5..8 -> 0; h in 9..12 -> 1; h in 13..16 -> 2; h in 17..18 -> 3; else -> 4 }
+        return SceneRenderer.PHOTOS[i % n]
+    }
 
     /** Every few seconds the next scene: it is drawn off the main thread, then fades in over 1.6 s. */
     private val rotate = object : Runnable {
         override fun run() {
-            if (look == Look.NIGHT && scenes().size > 1 && mode != Mode.SETTINGS) { sceneIdx = (sceneIdx + 1) % scenes().size; invalidate() }
-            if (look == Look.CLASSIC && mode != Mode.SETTINGS) { photoIdx = (photoIdx + 1) % SceneRenderer.PHOTOS.size; invalidate() }
+            if (look == Look.NIGHT && !timeSync() && scenes().size > 1 && mode != Mode.SETTINGS) { sceneIdx = (sceneIdx + 1) % scenes().size; invalidate() }
+            if (look == Look.CLASSIC && !timeSync() && mode != Mode.SETTINGS) { photoIdx = (photoIdx + 1) % SceneRenderer.PHOTOS.size; invalidate() }
             main.postDelayed(this, if (look == Look.CLASSIC) 90_000L else prefs.getInt("sceneSeconds", 20) * 1000L)
         }
     }
@@ -370,7 +418,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val tx = clockText(cal); val dt = dateText(cal); val wx = weather.text()
         val dim = SceneRenderer.isDim(cal.get(Calendar.HOUR_OF_DAY))
         val sp = scene()
-        val ph = SceneRenderer.PHOTOS[photoIdx % SceneRenderer.PHOTOS.size]
+        val ph = photo()
         val key = if (look == Look.NIGHT) "N|${sp.id}|$tx|$dt|$wx|$dim|${width}x$height" else "C|${ph.file}|$dim|${width}x$height"
         if (key == sceneKey) return
         sceneBusy = true
@@ -449,7 +497,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         text.typeface = Fonts.semibold(context); text.textSize = 30 * u; text.textAlign = Paint.Align.RIGHT
         c.drawText(dateText(cal), right, 241 * u, text)
         if (look == Look.CLASSIC) {
-            val p = SceneRenderer.PHOTOS[photoIdx % SceneRenderer.PHOTOS.size]
+            val p = photo()
             text.typeface = Fonts.regular(context); text.textSize = 23 * u; text.color = Color.argb(168, 255, 255, 255)
             c.drawText("${p.place}  ·  Photo: ${p.by}", right, 281 * u, text); text.color = Color.WHITE
         }
@@ -691,9 +739,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (focused) { c.translate(cx, cy - 10 * u * (size / (112 * u))); c.scale(1.16f, 1.16f); c.translate(-cx, -cy) }
         rect.set(x, y, x + size, y + size)
         if (focused) {   // the white ring and its shadow
-            paint.style = Paint.Style.FILL; paint.color = Color.argb(70, 0, 0, 0)
-            rect.offset(0f, 14 * u); rect.inset(-4 * u, -4 * u)
-            c.drawRoundRect(rect, radius + 4 * u, radius + 4 * u, paint)
+            softShadow(c, rect, radius, 18 * u, 22 * u, 110)
             rect.set(x - 4 * u, y - 4 * u, x + size + 4 * u, y + size + 4 * u)
             paint.color = Color.WHITE
             c.drawRoundRect(rect, radius + 4 * u, radius + 4 * u, paint)
@@ -729,11 +775,34 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         } else {
             glyph(c, u, cx, cy, size, index == store.line)
         }
+        if (focused) {   // couch-tv's light sliding across a focused tile, held part way
+            rect.set(x, y, x + size, y + size)
+            clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
+            c.save(); c.clipPath(clip)
+            paint.shader = LinearGradient(x + size * 0.1f, y, x + size * 0.9f, y + size, intArrayOf(0, Color.argb(46, 255, 255, 255), 0), floatArrayOf(0.3f, 0.55f, 0.8f), Shader.TileMode.CLAMP)
+            paint.style = Paint.Style.FILL; paint.alpha = 255
+            c.drawRect(rect, paint); paint.shader = null
+            c.restore()
+        }
         if (focused) {
             text.typeface = Fonts.semibold(context); text.textSize = 20 * u * (size / (112 * u)); text.textAlign = Paint.Align.CENTER
             c.drawText(dockTitle(index), cx, y + size + 12 * u + text.textSize * 0.85f, text)
         }
         c.restore()
+    }
+
+    /** A soft shadow under [r] (already at its place): stacked rounded rects, each a little bigger and fainter, so there is no hard edge and no blur filter to run on a weak TV. */
+    private fun softShadow(c: Canvas, r: RectF, radius: Float, dy: Float, spread: Float, alpha: Int) {
+        val n = 7
+        paint.style = Paint.Style.FILL
+        val save = RectF(r)
+        for (i in n downTo 1) {
+            val g = spread * i / n
+            r.set(save.left - g, save.top - g + dy, save.right + g, save.bottom + g + dy)
+            paint.color = Color.argb(alpha / n + 1, 0, 0, 0)
+            c.drawRoundRect(r, radius + g, radius + g, paint)
+        }
+        r.set(save)
     }
 
     private val dimFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
@@ -795,7 +864,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         c.save()
         if (focused) { c.translate(x + w / 2, y + h / 2); c.scale(1.07f, 1.07f); c.translate(-(x + w / 2), -(y + h / 2)) }
         rect.set(x, y, x + w, y + h)
-        if (focused) { paint.style = Paint.Style.FILL; paint.color = Color.argb(150, 0, 0, 0); rect.offset(0f, 18 * u); c.drawRoundRect(rect, r, r, paint); rect.offset(0f, -18 * u) }
+        if (focused) { paint.style = Paint.Style.FILL; softShadow(c, rect, r, 24 * u, 36 * u, 190) }
         paint.style = Paint.Style.FILL; paint.color = Color.rgb(28, 28, 33)
         c.drawRoundRect(rect, r, r, paint)
         clip.reset(); clip.addRoundRect(rect, r, r, Path.Direction.CW)
@@ -824,8 +893,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (focused) { c.translate(x + w / 2, y + h / 2); c.scale(1.16f, 1.16f); c.translate(-(x + w / 2), -(y + h / 2)) }
         rect.set(x, y, x + w, y + h)
         paint.style = Paint.Style.FILL
-        paint.color = Color.argb(if (focused) 150 else 90, 0, 0, 0)
-        rect.offset(0f, if (focused) 24 * u else 8 * u); c.drawRoundRect(rect, r, r, paint); rect.offset(0f, if (focused) -24 * u else -8 * u)
+        softShadow(c, rect, r, if (focused) 28 * u else 8 * u, if (focused) 40 * u else 14 * u, if (focused) 190 else 100)
         clip.reset(); clip.addRoundRect(rect, r, r, Path.Direction.CW)
         c.save(); c.clipPath(clip)
         paint.alpha = if (dim) 120 else 255
