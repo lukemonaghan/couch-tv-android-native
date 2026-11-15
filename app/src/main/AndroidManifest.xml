@@ -49,6 +49,18 @@
         <intent><action android:name="android.settings.SETTINGS" /></intent>
     </queries>
 
+    <!-- The quick buttons: the screensaver (is a dream on and installed, Google TV's Ambient mode settings) and
+         the TV's own Bluetooth, Wi-Fi and Settings screens. Android 11 and newer hide these otherwise. -->
+    <queries>
+        <intent><action android:name="android.service.dreams.DreamService" /></intent>
+        <intent><action android:name="dreamx.two.panel.SETTINGS" /></intent>
+        <package android:name="com.google.android.apps.tv.dreamx" />
+        <intent><action android:name="android.settings.BLUETOOTH_SETTINGS" /></intent>
+        <intent><action android:name="android.settings.WIFI_SETTINGS" /></intent>
+        <intent><action android:name="android.settings.WIRELESS_SETTINGS" /></intent>
+        <intent><action android:name="android.settings.SETTINGS" /></intent>
+    </queries>
+
     <application
         android:name=".App"
         android:label="Home"

@@ -83,6 +83,17 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (watch.cards.isEmpty() && prefs.getBoolean("demoCards", false)) DEMO else watch.cards
     private val main = Handler(Looper.getMainLooper())
 
+    // quick buttons beyond Sleep and Look, and what Keep watching adds (QuickSystem.kt, HomeOverlays.kt)
+    private val quickSys = QuickSystem(ctx, prefs)
+    private val over = HomeOverlays(ctx)
+    private var screenOff = false
+    private var screenOffAt = 0L
+    private var wokeBy = -1             // the key that woke the screen: its release is not a press
+    private var cardMenu = false        // the hold-OK menu on a Keep watching card
+    private var cardMenuPick = 0
+    private var noteText = ""; private var noteUntil = 0L      // a failed quick button, under the buttons
+    private var toastText = ""; private var toastUntil = 0L    // a short confirmation at the top
+
     private val ground = Color.parseColor("#0D1E19")
     private val tileBg = Color.parseColor("#1A2B26")
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -99,8 +110,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ---- the top row: the people switch (top left) and the quick buttons (top right)
 
     fun people(): List<String> = prefs.getString("people", null)?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
-    private fun quick(): List<String> = (prefs.getString("quick", null) ?: "sleep,look").split(',')
-        .filter { it == "sleep" || it == "look" || (it == "input" && store.inputsAvailable) }
+    private fun quick(): List<String> = QuickButtons.enabled(prefs).filter { quickSys.available(it) && (it != "input" || store.inputsAvailable) }
     private val qAnchor = HashMap<String, FloatArray>()   // each quick button's right edge and bottom, where the Input menu hangs from
     private val sleepOptions = listOf(0, 15, 30, 60, 90)
     private var sleepIdx = 0
@@ -194,7 +204,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ------------------------------------------------------------------ what the Activity calls
 
     /** Home pressed while the home is already showing: back to the first tile. */
-    fun goHome() { mode = Mode.DOCK; fi = 0; invalidate() }
+    fun goHome() { if (screenOff) wake(-1); cardMenu = false; mode = Mode.DOCK; fi = 0; invalidate() }
 
     /** The app list changed (a package came or went, or the home came back to the front). */
     fun refresh() {
@@ -210,7 +220,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     fun trim() { icons.clear(); watch.clear() }
 
     /** Back: one step out of whatever is open. False when the home is already at its top level. */
-    fun back(): Boolean = when (mode) {
+    fun back(): Boolean = if (quickBack()) true else when (mode) {
         Mode.MOVING -> { mode = Mode.DOCK; fi = movingIndex; invalidate(); true }
         Mode.MENU -> { mode = menuFrom; invalidate(); true }
         Mode.MORE -> { mode = Mode.DOCK; fi = dockReturn.coerceIn(0, store.line + 1); invalidate(); true }
@@ -222,6 +232,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     // ------------------------------------------------------------------ keys
 
     override fun onKeyDown(code: Int, e: KeyEvent): Boolean {
+        if (screenOff) { if (e.repeatCount == 0) wake(code); return true }   // any button wakes the screen
         when (code) {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
                 dir(code); return true
@@ -245,6 +256,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     override fun onKeyUp(code: Int, e: KeyEvent): Boolean {
+        if (code == wokeBy) { wokeBy = -1; return true }
         if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
             if (!longHandled) press()
             return true
@@ -257,6 +269,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         look = runCatching { Look.valueOf(prefs.getString("look", null) ?: "NIGHT") }.getOrDefault(Look.NIGHT)
         sceneKey = ""
         fi = fi.coerceIn(0, store.line + 1)
+        ti = ti.coerceIn(0, maxOf(0, topItems().size - 1))
         invalidate()
     }
 
@@ -273,6 +286,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private val gridCols get() = if (look == Look.NIGHT) 5 else 8
 
     private fun dir(code: Int) {
+        if (cardMenu) { cardMenuKey(code); return }
         if (mode == Mode.SETTINGS) { settings.key(code); return }
         val dockCount = store.line + 2
         when (mode) {
@@ -346,6 +360,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     private fun press() {
+        if (cardMenu) { chooseCardMenu(); return }
         when (mode) {
             Mode.DOCK -> when {
                 fi < store.line -> launch(store.items[fi])
@@ -359,6 +374,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                     "sleep" -> { sleepIdx = (sleepIdx + 1) % sleepOptions.size; act.setSleepTimer(sleepOptions[sleepIdx]) }
                     "look" -> cycleLook()
                     "input" -> qAnchor["input"].let { a -> InputMenu.show(context, a?.get(0) ?: (width - 80 * height / 1080f), a?.get(1) ?: (148 * height / 1080f)) }
+                    else -> quickAction(t.kind)
                 }
                 invalidate()
             }
@@ -371,6 +387,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun longPress() {
         when (mode) {
+            Mode.CARDS -> if (!cardMenu && cards().isNotEmpty()) { cardMenu = true; cardMenuPick = 0 }
+            Mode.SETTINGS -> settings.hold()
             Mode.DOCK -> if (fi < store.line) openMenu(fi)
             Mode.MORE -> {
                 if (mi >= store.line) {
@@ -420,6 +438,73 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     // ------------------------------------------------------------------ drawing
 
+    // ------------------------------------------------------------------ quick buttons beyond Sleep and Look, and Keep watching's menu
+
+    private fun note(message: String) {
+        noteText = message; noteUntil = android.os.SystemClock.uptimeMillis() + 6000
+        main.postDelayed({ invalidate() }, 6100)
+    }
+
+    private fun toast(message: String) {
+        toastText = message; toastUntil = android.os.SystemClock.uptimeMillis() + 3000
+        main.postDelayed({ invalidate() }, 3100)
+    }
+
+    private fun quickAction(kind: String) {
+        when (kind) {
+            "screen_off" -> { screenOff = true; screenOffAt = android.os.SystemClock.uptimeMillis(); quickSys.screenOff(true) }
+            "screensaver" -> if (!quickSys.startScreensaver()) note("This TV has no screensaver to open.")
+            "headphones", "bluetooth" -> if (!quickSys.openSettingsScreen("bluetooth")) note("This TV has no Bluetooth screen to open.")
+            "network" -> if (!quickSys.openSettingsScreen("network")) note("This TV has no network screen to open.")
+            "tvsettings" -> if (!quickSys.openTvSettings()) note("Could not open the TV's settings.")
+        }
+    }
+
+    /** Any button wakes the Screen off cover. [code] is the key, so its release is not taken for a press. */
+    private fun wake(code: Int) { screenOff = false; wokeBy = code; quickSys.screenOff(false); invalidate() }
+
+    /** Back wakes the screen or closes the card menu before it does anything else. */
+    private fun quickBack(): Boolean {
+        if (screenOff) { wake(-1); return true }
+        if (cardMenu) { cardMenu = false; invalidate(); return true }
+        return false
+    }
+
+    private fun cardMenuKey(code: Int) {
+        when (code) {
+            KeyEvent.KEYCODE_DPAD_UP -> if (cardMenuPick > 0) cardMenuPick--
+            KeyEvent.KEYCODE_DPAD_DOWN -> if (cardMenuPick < CARD_MENU.size - 1) cardMenuPick++
+        }
+        invalidate()
+    }
+
+    private fun chooseCardMenu() {
+        val card = cards().getOrNull(ci)
+        cardMenu = false
+        if (cardMenuPick == 0 && card != null) { watch.dismiss(card); toast("Removed") }
+        invalidate()
+    }
+
+    /** Classic and OLED show the focused show's title big at the top left. Night's cards carry their own titles. */
+    private fun heroCard(): Card? = if (look == Look.NIGHT || mode != Mode.CARDS) null else cards().getOrNull(ci)
+
+    private fun drawQuickOverlays(c: Canvas, u: Float) {
+        heroCard()?.let { card ->
+            val sub = listOf(card.app, card.episode.replace(" E", ", E")).filter { it.isNotBlank() }.joinToString("  ·  ")
+            over.drawHero(c, u, if (people().size >= 2) 132 * u else 60 * u, card.title, sub)
+        }
+        if (cardMenu && cards().getOrNull(ci) != null) {
+            // the card's middle and top, as drawCards and drawHomeGrid lay it out
+            val night = look == Look.NIGHT
+            val first = if (night) maxOf(0, ci - 2) else maxOf(0, ci - 4)
+            val ax = if (night) 80 * u + (ci - first) * (542 * u) + 260 * u else 80 * u + (ci - first) * 360 * u + 160 * u
+            over.drawMenu(c, u, width, ax, if (night) 692 * u else 369 * u, CARD_MENU, cardMenuPick)
+        }
+        val now = android.os.SystemClock.uptimeMillis()
+        if (noteText.isNotEmpty() && now < noteUntil) over.drawNote(c, u, width - 80 * u, if (look == Look.NIGHT) 190 * u else 400 * u, noteText)
+        if (toastText.isNotEmpty() && now < toastUntil) over.drawToast(c, u, width, toastText)
+    }
+
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { sceneKey = ""; super.onSizeChanged(w, h, ow, oh) }
 
     private fun clockText(cal: Calendar): String {
@@ -465,6 +550,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     override fun onDraw(c: Canvas) {
         val u = height / 1080f
+        if (screenOff) { if (over.drawScreenOff(c, width, height, u, android.os.SystemClock.uptimeMillis() - screenOffAt, "Press any button to wake")) postInvalidateOnAnimation(); return }
         if (mode == Mode.SETTINGS) { settings.draw(c, width, height); return }
         if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || look == Look.OLED) {
             c.drawColor(if (look == Look.OLED && mode != Mode.MORE) Color.BLACK else ground)
@@ -491,6 +577,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Mode.MENU -> { if (menuFrom == Mode.MORE) drawMore(c, u) else { drawTop(c, u); drawCards(c, u); drawDock(c, u) }; drawMenu(c, u) }
             else -> { drawTop(c, u); drawCards(c, u); drawDock(c, u) }
         }
+        drawQuickOverlays(c, u)
     }
 
     /** Classic and OLED: the clock at the top right, the date, and under Classic the photo's place and photographer. */
@@ -514,7 +601,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         clockPaint.clearShadowLayer(); clockPaint.letterSpacing = 0f
         text.typeface = Fonts.semibold(context); text.textSize = 30 * u; text.textAlign = Paint.Align.RIGHT
         c.drawText(dateText(cal), right, 241 * u, text)
-        if (look == Look.CLASSIC) {
+        if (look == Look.CLASSIC && heroCard() == null) {
             val p = photo()
             text.typeface = Fonts.regular(context); text.textSize = 23 * u; text.color = Color.argb(168, 255, 255, 255)
             c.drawText("${p.place}  ·  Photo: ${p.by}", right, 281 * u, text); text.color = Color.WHITE
@@ -625,7 +712,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         for (q in items.filter { it.kind != "person" }.asReversed()) {
             val idx = items.indexOf(q); val focus = mode == Mode.TOP && ti == idx
             val set = q.kind == "sleep" && sleepOptions[sleepIdx] > 0
-            val label = when { q.kind == "look" -> "Look"; q.kind == "input" -> "Input"; set -> "${sleepOptions[sleepIdx]} min"; else -> "Sleep timer" }
+            val label = when { q.kind == "look" -> "Look"; q.kind == "input" -> "Input"; set -> "${sleepOptions[sleepIdx]} min"; q.kind != "sleep" -> QuickButtons.pill(q.kind); else -> "Sleep timer" }
             val w = 16 * u + 24 * u + 10 * u + text.measureText(label) + 20 * u
             val l = right - w
             qAnchor.getOrPut(q.kind) { FloatArray(2) }.also { it[0] = right; it[1] = 360 * u }
@@ -641,6 +728,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     }
 
     private fun quickIcon(c: Canvas, u: Float, kind: String, cx: Float, cy: Float, color: Int) {
+        if (kind != "sleep" && kind != "look" && kind != "input") { QuickButtons.icon(c, paint, kind, cx, cy, 1.45f * u, color); return }
         paint.style = Paint.Style.STROKE; paint.strokeWidth = 3.2f * u; paint.color = color; paint.strokeCap = Paint.Cap.ROUND; paint.strokeJoin = Paint.Join.ROUND
         clip.reset()
         if (kind == "sleep") {   // a crescent moon
@@ -665,7 +753,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     /** Night's Keep watching: a heading and glass cards, 520 x 141, 22 apart, from 80 px in. Three fit; the row slides to keep focus in view. */
     private fun drawCards(c: Canvas, u: Float) {
-        if (look != Look.NIGHT) return
+        if (look != Look.NIGHT || cardMenu) return   // the cards step aside while their menu is open
         val list = cards()
         if (list.isEmpty()) return
         text.typeface = Fonts.semibold(context); text.textAlign = Paint.Align.LEFT
@@ -1060,5 +1148,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Card(-2, "au.net.abc.iview", "ABC iview", "Fisk", "S3 E1", null, 0.55f, null),
         )
         const val COLS = 6
+        const val MENU_OPTIONS = 3
+        val CARD_MENU = listOf("Remove from Keep watching", "Cancel")
     }
 }
