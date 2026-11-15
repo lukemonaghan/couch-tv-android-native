@@ -45,6 +45,7 @@ class NowPlaying(
     private val manager: MediaSessionManager? = runCatching { ctx.getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager }.getOrNull()
     var track: Track? = null; private set
     private var art: Bitmap? = null
+    private var bg: Bitmap? = null
     private var artKey = ""
     private var glow1 = Color.rgb(88, 66, 160); private var glow2 = Color.rgb(40, 90, 160)
     private var lastTrackKey = ""
@@ -86,7 +87,7 @@ class NowPlaying(
         val md = pick?.metadata
         val title = md?.getString(MediaMetadata.METADATA_KEY_TITLE)
         if (pick == null || title.isNullOrBlank()) {
-            if (track != null) { track = null; ambientOpen = false; lastTrackKey = ""; art = null; artKey = ""; changed(false) }
+            if (track != null) { track = null; ambientOpen = false; lastTrackKey = ""; art = null; bg = null; artKey = ""; changed(false) }
             return
         }
         val ps = pick.playbackState
@@ -118,7 +119,16 @@ class NowPlaying(
             val s = 480f / maxOf(it.width, it.height)
             if (s < 1f) Bitmap.createScaledBitmap(it, (it.width * s).toInt().coerceAtLeast(1), (it.height * s).toInt().coerceAtLeast(1), true) else it
         }
+        bg = art?.let { blurred(it) }
         art?.let { palette(it) } ?: run { glow1 = Color.rgb(88, 66, 160); glow2 = Color.rgb(40, 90, 160) }
+    }
+
+    /** A soft blur of the cover for the music view's background: shrunk to 12 px then grown to 48 px with smoothing, drawn stretched over the screen (about 9 KB, no blur library). */
+    private fun blurred(b: Bitmap): Bitmap {
+        val tiny = Bitmap.createScaledBitmap(b, 12, 12, true)
+        val soft = Bitmap.createScaledBitmap(tiny, 48, 48, true)
+        if (tiny !== b) tiny.recycle()
+        return soft
     }
 
     /** Two glow colours from the cover: its most vivid pixel and its average, at 16 x 16. */
@@ -322,6 +332,11 @@ class NowPlaying(
         glowAt(c, w * 0.35f, h * 0.45f, w * 0.45f, glow1, (0.7f * breathe * 255).toInt())
         glowAt(c, w * 0.65f, h * 0.55f, w * 0.5f, glow2, (0.7f * breathe * 255).toInt())
         paint.shader = null
+        bg?.let { b ->   // the cover, blurred, over the whole screen, darkened so the words stay easy to read
+            rect.set(0f, 0f, w.toFloat(), h.toFloat()); paint.isFilterBitmap = true; paint.alpha = 255
+            c.drawBitmap(b, null, rect, paint)
+            paint.color = Color.argb(120, 0, 0, 0); c.drawRect(rect, paint)
+        }
 
         val artS = 400 * u; val gap = 80 * u; val metaW = 640 * u
         val left = (w - (artS + gap + metaW)) / 2f
