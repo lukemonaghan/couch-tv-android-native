@@ -441,7 +441,9 @@ class NowPlaying(
             paint.style = Paint.Style.FILL; paint.shader = null; paint.color = Color.argb(128, 0, 0, 0)
             c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
         }
-        if (vizLive && ov <= 0.01f) { c.restoreToCount(layer.takeIf { it >= 0 } ?: c.saveCount); toast(c, w, h, u); if (t.playing) viz.start() else viz.stop(); return }
+        val pos = if (t.playing) t.position + (SystemClock.uptimeMillis() - lastReadAt()) else t.position
+        val keepLyr = vizLive && lyricsOn && prefs.getBoolean("np_lyrics_hidden", false)   // lyrics stay up when the buttons hide
+        if (vizLive && ov <= 0.01f) { c.restoreToCount(layer.takeIf { it >= 0 } ?: c.saveCount); toast(c, w, h, u); if (keepLyr) drawLyrics(c, w, h, u, pos); if (t.playing) viz.start() else viz.stop(); return }
         // The layout: the middle of the screen is left clear for the visualiser. The cover sits bottom left, the words bottom right,
         // a full-width progress bar runs along the bottom with the buttons centred under it, and the lyrics go top right.
         val now = SystemClock.uptimeMillis()
@@ -493,7 +495,6 @@ class NowPlaying(
         }
 
         // the bottom band: progress, then the buttons, then the hints on the left
-        val pos = if (t.playing) t.position + (now - lastReadAt()) else t.position
         text.typeface = Fonts.regular(ctx); text.textSize = 20 * u; text.color = Color.argb(179, 255, 255, 255)
         c.drawText(fmt(pos), m + 10 * u, barY + 7 * u, text)
         val barL = m + 100 * u; val barR = w - m - (if (t.duration > 0) 100 * u else 10 * u)
@@ -531,7 +532,7 @@ class NowPlaying(
         c.drawText(t.app, bx + 24 * u, btnY + 6 * u, text)
         // preset name bottom left (left aligned), down hint bottom right (right aligned), same height
         val hy = btnY + 6 * u
-        val sideW = bx - m - 20 * u
+        val sideW = btnLeft - m - 24 * u
         text.typeface = Fonts.regular(ctx)
         val line2 = if (vizLive && vizName.isNotEmpty()) "Preset: $vizName"
             else if (!vizLive && ProjectM.available && prefs.getBoolean("np_viz", true) && !PresetStore.ready(ctx)) "Music visualiser: get presets in Settings" else ""
@@ -547,9 +548,10 @@ class NowPlaying(
         val hint = TextUtils.ellipsize("▼ Press Down or Back for apps", text, w - m - zoneL, TextUtils.TruncateAt.END)
         c.drawText(hint, 0, hint.length, w - m, hy, text)
         text.textAlign = Paint.Align.LEFT
-        if (lyricsOn) drawLyrics(c, w, h, u, pos)
+        if (lyricsOn && !keepLyr) drawLyrics(c, w, h, u, pos)
         text.color = Color.WHITE
         if (layer >= 0) c.restoreToCount(layer)
+        if (keepLyr) drawLyrics(c, w, h, u, pos)
         if (vizLive) toast(c, w, h, u)
     }
 
@@ -576,10 +578,10 @@ class NowPlaying(
             text.textAlign = Paint.Align.RIGHT
             text.typeface = Fonts.semibold(ctx); text.textSize = 40 * u; text.color = Color.argb((255 * a).toInt(), 255, 255, 255)
             text.setShadowLayer(8 * u, 0f, 0f, Color.argb((210 * a).toInt(), 0, 0, 0))
-            val tt = TextUtils.ellipsize(tr.title, text, w * 0.6f, TextUtils.TruncateAt.END)
+            val tt = TextUtils.ellipsize(tr.title, text, w * 0.5f, TextUtils.TruncateAt.END)
             c.drawText(tt, 0, tt.length, w - 80 * u, h - 112 * u, text)
             text.typeface = Fonts.regular(ctx); text.textSize = 26 * u; text.color = Color.argb((220 * a).toInt(), 255, 255, 255)
-            val ss = TextUtils.ellipsize(listOf(tr.artist, tr.album).filter { it.isNotEmpty() }.joinToString("  ·  "), text, w * 0.6f, TextUtils.TruncateAt.END)
+            val ss = TextUtils.ellipsize(listOf(tr.artist, tr.album).filter { it.isNotEmpty() }.joinToString("  ·  "), text, w * 0.5f, TextUtils.TruncateAt.END)
             c.drawText(ss, 0, ss.length, w - 80 * u, h - 70 * u, text)
             text.clearShadowLayer(); text.textAlign = Paint.Align.LEFT
         }
@@ -590,7 +592,8 @@ class NowPlaying(
         text.typeface = Fonts.regular(ctx); text.textSize = 22 * u; text.textAlign = Paint.Align.LEFT
         text.color = Color.argb((190 * a).toInt(), 255, 255, 255)
         text.setShadowLayer(6 * u, 0f, 0f, Color.argb((200 * a).toInt(), 0, 0, 0))
-        c.drawText(TextUtils.ellipsize(vizName, text, w - 160 * u, TextUtils.TruncateAt.END), 0, TextUtils.ellipsize(vizName, text, w - 160 * u, TextUtils.TruncateAt.END).length, 80 * u, h - 70 * u, text)
+        val vn = TextUtils.ellipsize(vizName, text, w * 0.36f, TextUtils.TruncateAt.END)
+        c.drawText(vn, 0, vn.length, 80 * u, h - 70 * u, text)
         text.clearShadowLayer()
     }
 

@@ -8,7 +8,7 @@ import java.util.Locale
  * The "Music visualiser" page of Home settings: how the MilkDrop background behaves, and the preset browser.
  * Browsing goes Category, then Group, then single presets. OK on a category or group row opens it, and the first row of
  * each level downloads or removes everything in it. Nothing is installed until asked: [PresetStore] fetches only what is picked.
- * Prefs (home): np_viz, viz_q, viz_fps, viz_secs, viz_bright (20 to 100), viz_autohide, viz_slow (see Visualiser.kt).
+ * Prefs (home): np_viz, np_lyrics_hidden, viz_q, viz_fps, viz_secs, viz_bright (20 to 100), viz_autohide, viz_slow (see Visualiser.kt).
  */
 object VizSettings {
     private var cat: String? = null
@@ -72,6 +72,7 @@ object VizSettings {
             out += IdleSettings.Item("New preset every", "Left and right change it by hand", SECS.let { s -> val v = p.getInt("viz_secs", 45); if (v == 0) "Only by hand" else if (v >= 60) "${v / 60} min${if (v % 60 != 0) " ${v % 60} s" else ""}" else "$v seconds" }) { p.edit().putInt("viz_secs", next(SECS, p.getInt("viz_secs", 45))).apply() }
             out += IdleSettings.Item("Brightness", "How bright the visualiser is. With the buttons hidden, up and down change it", "${p.getInt("viz_bright", 100)}%") { val b = p.getInt("viz_bright", 100); p.edit().putInt("viz_bright", if (b <= 20) 100 else b - 10).apply() }
             out += IdleSettings.Item("Hide the buttons after", "Fades the words and buttons so only the visualiser shows. Any key brings them back", p.getInt("viz_autohide", 0).let { if (it == 0) "Never" else "$it seconds" }) { p.edit().putInt("viz_autohide", next(HIDE, p.getInt("viz_autohide", 0))).apply() }
+            out += IdleSettings.Item("Lyrics with the buttons hidden", "Keep the lyrics showing when the buttons are hidden. Needs Show lyrics on", check = p.getBoolean("np_lyrics_hidden", false)) { p.edit().putBoolean("np_lyrics_hidden", !p.getBoolean("np_lyrics_hidden", false)).apply() }
             out += IdleSettings.Item("Skipped presets", "Ones that ran too slowly or failed on this TV. OK lets them try again", "${skipped.size}") { p.edit().remove("viz_slow").apply() }
 
             out += IdleSettings.Item("PRESETS", header = true)
