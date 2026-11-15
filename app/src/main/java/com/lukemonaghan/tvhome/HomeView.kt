@@ -373,7 +373,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             Mode.TOP -> {
                 val n = topItems().size
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ti > 0) ti--
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (ti > 0) ti-- else if (np.reach()) { mode = Mode.NP; np.focus() }   // left of the first quick button: the now playing card
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (ti < n - 1) ti++
                     KeyEvent.KEYCODE_DPAD_DOWN -> if (np.reach()) { mode = Mode.NP; np.focus() } else mode = if (cards().isNotEmpty()) Mode.CARDS else Mode.DOCK
                 }
