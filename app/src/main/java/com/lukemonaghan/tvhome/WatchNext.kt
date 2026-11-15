@@ -35,6 +35,20 @@ class WatchNext(private val ctx: Context, private val onChange: () -> Unit) {
     }
     private val pending = HashSet<String>()
 
+    private val prefs = ctx.getSharedPreferences("home", Context.MODE_PRIVATE)
+
+    /** Shows the household removed from Keep watching on this TV: the row id, and "package|title" for when the app writes the row again. */
+    private fun hidden(): Set<String> = prefs.getStringSet("hiddenWatchNext", emptySet()) ?: emptySet()
+
+    /** Removes a show from Keep watching on this TV only. The app's own Watch Next row is never touched. */
+    fun dismiss(card: Card) {
+        val h = hidden().toMutableSet()
+        h.add(card.id.toString()); h.add("${card.pkg}|${card.title}")
+        prefs.edit().putStringSet("hiddenWatchNext", h).apply()
+        cards = cards.filter { it.id != card.id && !(it.pkg == card.pkg && it.title == card.title) }
+        onChange()
+    }
+
     val permitted get() = ctx.checkSelfPermission(READ_TV) == PackageManager.PERMISSION_GRANTED
 
     /** Reads the list again (cheap: one query). Call when the home comes back to the front. */
@@ -49,12 +63,15 @@ class WatchNext(private val ctx: Context, private val onChange: () -> Unit) {
     private fun read(): List<Card> {
         val out = ArrayList<Card>()
         val perApp = HashMap<String, Int>()
+        val gone = hidden()
         val cols = arrayOf("_id", "package_name", "title", "episode_title", "season_display_number", "episode_display_number",
             "poster_art_uri", "thumbnail_uri", "last_playback_position_millis", "duration_millis", "intent_uri")
         ctx.contentResolver.query(WATCH_NEXT, cols, null, null, "last_engagement_time_utc_millis DESC")?.use { c ->
             while (c.moveToNext() && out.size < 20) {
                 val pkg = c.getString(1) ?: continue
                 if (pkg == ctx.packageName) continue
+                val id = c.getLong(0)
+                if (id.toString() in gone || "$pkg|${c.getString(2).orEmpty()}" in gone) continue
                 val n = (perApp[pkg] ?: 0) + 1
                 if (n > 5) continue            // at most 5 cards from one app
                 perApp[pkg] = n

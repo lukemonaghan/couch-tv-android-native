@@ -30,12 +30,15 @@ class SettingsScreen(
     private var inRows = false
     private var row = 0
     private var scroll = 0
+    private var lift: String? = null   // a quick button picked up with hold OK: up and down move it
+    private val quickSys by lazy { QuickSystem(ctx, prefs) }
     private var results: List<Weather.Place>? = null   // the place search answer, shown on the Location page
 
     fun open() { page = 0; inRows = false; row = 0; scroll = 0; results = null }
 
     /** Back: one step out. False when the screen should close. */
     fun back(): Boolean {
+        if (lift != null) { lift = null; return true }
         if (results != null) { results = null; row = 0; return true }
         if (inRows) { inRows = false; return true }
         return false
@@ -108,12 +111,14 @@ class SettingsScreen(
             }
         }
         "Quick buttons" -> {
-            val q = (prefs.getString("quick", null) ?: "sleep,look").split(',')
-            fun toggle(k: String) { val n = if (k in q) q - k else q + k; prefs.edit().putString("quick", n.joinToString(",")).apply() }
-            listOf(
-                Row("Sleep timer", "Lets the TV go to sleep after 15, 30, 60 or 90 minutes", check = "sleep" in q) { toggle("sleep") },
-                Row("Look switch", "Flips between Night, OLED and Classic", check = "look" in q) { toggle("look") },
-            )
+            val on = QuickButtons.enabled(prefs)
+            QuickButtons.listed(prefs).map { id ->
+                val k = QuickButtons.kind(id)
+                val note = if (id == "screensaver" && !quickSys.screensaverReady()) "Needs a screensaver and \"modify system settings\" (the install script grants it)" else k.note
+                Row(k.label, note, if (lift == id) "Up or down to move" else "", check = id in on) {
+                    if (lift == id) lift = null else QuickButtons.toggle(prefs, id)
+                }
+            }
         }
         else -> listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
@@ -123,7 +128,29 @@ class SettingsScreen(
 
     // ------------------------------------------------------------------ keys
 
+    /** Hold OK on a switched-on quick button picks it up to reorder. False when the row is not one. */
+    fun hold(): Boolean {
+        if (!inRows || pages[page] != "Quick buttons") return false
+        val id = QuickButtons.listed(prefs).getOrNull(row) ?: return false
+        if (id !in QuickButtons.enabled(prefs)) return false
+        lift = id
+        changed()
+        return true
+    }
+
     fun key(code: Int): Boolean {
+        lift?.let { id ->
+            when (code) {
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    val d = if (code == KeyEvent.KEYCODE_DPAD_UP) -1 else 1
+                    QuickButtons.move(prefs, id, d)
+                    row = QuickButtons.listed(prefs).indexOf(id).coerceAtLeast(0)
+                }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> lift = null
+            }
+            changed()
+            return true
+        }
         val list = rows()
         when (code) {
             KeyEvent.KEYCODE_DPAD_UP -> if (inRows) { do { if (row > 0) row-- } while (list.getOrNull(row)?.header == true && row > 0) } else if (page > 0) { page--; row = 0; results = null }
@@ -229,7 +256,7 @@ class SettingsScreen(
             }
         }
         text.typeface = Fonts.regular(ctx); text.textSize = 21 * u; text.color = Color.argb(130, 255, 255, 255)
-        c.drawText("OK to change, Back to go back", 748 * u, 1005 * u, text)
+        c.drawText(if (pages[page] == "Quick buttons") "OK to switch on or off, hold OK on one that is on to move it, Back to go back" else "OK to change, Back to go back", 748 * u, 1005 * u, text)
     }
 
     /** Small line icons on the sidebar tiles. */

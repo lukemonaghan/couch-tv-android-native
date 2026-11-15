@@ -54,7 +54,7 @@ class MainActivity : Activity(), HomeActions {
     override fun onResume() {
         super.onResume()
         resumed = true
-        restoreTimeout()   // a screen-off time left short by the sleep timer is put back
+        if (!QuickSystem.justPressed()) restoreTimeout()   // a screen-off time left short by the sleep timer or the screensaver button is put back (not in the first moments of a screensaver press)
         if (::home.isInitialized) home.refresh()   // an app may have been installed or removed while we were away
     }
 
@@ -107,10 +107,14 @@ class MainActivity : Activity(), HomeActions {
         start(i)
     }
 
-    /** A Keep watching card: the app's own link for the show, only ever to the app that owns it, else just the app. */
+    /** A Keep watching card: the app's own link for the show (an intent: link or a plain one), only ever to the app that owns it, else just the app. */
     override fun openCard(pkg: String, intentUri: String?) {
-        if (intentUri != null) {
-            val i = runCatching { Intent.parseUri(intentUri, Intent.URI_INTENT_SCHEME) }.getOrNull()
+        if (pkg == packageName) return
+        if (intentUri != null && intentUri.length <= 2000) {
+            val i = runCatching {
+                if (intentUri.startsWith("intent:")) Intent.parseUri(intentUri, Intent.URI_INTENT_SCHEME)
+                else Intent(Intent.ACTION_VIEW, Uri.parse(intentUri))
+            }.getOrNull()
             if (i != null) {
                 if (i.component != null && i.component!!.packageName != pkg) i.component = null
                 i.`package` = pkg; i.selector = null
