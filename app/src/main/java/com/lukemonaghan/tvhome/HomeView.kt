@@ -43,7 +43,7 @@ interface HomeActions {
 class HomeView(ctx: Context, private val store: AppStore, private val act: HomeActions) : View(ctx) {
     private enum class Mode { DOCK, MORE, MENU, MOVING, CARDS, SETTINGS, TOP, POP, KIDS, SMART, NP }
     /** Night: the scene with the big glass clock and the dock. OLED: a grid on pure black. Classic: a grid over the photo. */
-    private enum class Look { NIGHT, OLED, CLASSIC, DARK, LIGHT }
+    private enum class Look { NIGHT, OLED, CLASSIC, DARK }
 
     private var mode = Mode.DOCK
     private var menuFrom = Mode.DOCK
@@ -130,10 +130,10 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     private var toastText = ""; private var toastUntil = 0L    // a short confirmation at the top
 
     private val ground = Color.parseColor("#0D1E19")
-    /** OLED, Dark and Light: a solid colour, no scene. Light turns the words and rings dark ([ink]). */
-    private val solid get() = look == Look.OLED || look == Look.DARK || look == Look.LIGHT
-    private val ink get() = if (look == Look.LIGHT) Color.rgb(22, 24, 31) else Color.WHITE
-    private fun inkA(a: Int) = if (look == Look.LIGHT) Color.argb(a, 22, 24, 31) else Color.argb(a, 255, 255, 255)
+    /** OLED and Dark: a solid colour, no scene. */
+    private val solid get() = look == Look.OLED || look == Look.DARK
+    private val ink = Color.WHITE
+    private fun inkA(a: Int) = Color.argb(a, 255, 255, 255)
     private val tileBg = Color.parseColor("#1A2B26")
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; typeface = Fonts.regular(ctx) }
@@ -156,7 +156,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         val ends = (act as? IdleHost)?.sleepEndsAt() ?: 0L
         return if (ends <= 0L) 0 else Math.ceil((ends - System.currentTimeMillis()) / 60000.0).toInt().coerceAtLeast(0)
     }
-    private fun lookLabel() = when (look) { Look.NIGHT -> "OLED Cinema look"; Look.OLED -> "Classic look"; Look.CLASSIC -> "Dark look"; Look.DARK -> "Light look"; Look.LIGHT -> "Night look" }
+    private fun lookLabel() = when (look) { Look.NIGHT -> "OLED Cinema look"; Look.OLED -> "Classic look"; Look.CLASSIC -> "Dark look"; Look.DARK -> "Night look" }
 
     private class Top(val kind: String, val label: String = "")
     private fun topItems(): List<Top> {
@@ -714,7 +714,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (mode == Mode.SMART) { smart.draw(c, width, height); return }
         if (np.ambientOpen) { np.drawAmbient(c, width, height, u); postInvalidateDelayed(100); return }
         if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || solid) {
-            c.drawColor(when { look == Look.LIGHT -> Color.rgb(236, 239, 244); look == Look.DARK -> Color.rgb(20, 22, 29); look == Look.OLED && mode != Mode.MORE -> Color.BLACK; else -> ground })
+            c.drawColor(when { look == Look.DARK -> Color.rgb(20, 22, 29); look == Look.OLED && mode != Mode.MORE -> Color.BLACK; else -> ground })
         } else {
             ensureScene()
             val b = sceneBmp
@@ -825,7 +825,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                     val g = 3 * u; paint.style = Paint.Style.STROKE; paint.strokeWidth = g; rect.inset(-g / 2, -g / 2); c.drawRoundRect(rect, 24 * u + g / 2, 24 * u + g / 2, paint); rect.inset(g / 2, g / 2); paint.style = Paint.Style.FILL
                 }
                 if (on || focus) { paint.style = Paint.Style.FILL; paint.color = if (on) ink else inkA(41); c.drawRoundRect(rect, 24 * u, 24 * u, paint) }
-                text.color = if (on) (if (look == Look.LIGHT) Color.WHITE else Color.rgb(17, 17, 17)) else if (focus) ink else inkA(199)
+                text.color = if (on) Color.rgb(17, 17, 17) else if (focus) ink else inkA(199)
                 c.drawText(people[i].label, x + 20 * u, 91 * u, text)
                 x += pw[i] + 8 * u
             }
@@ -881,7 +881,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 rect.set(x, 66 * u, x + pw[i], 102 * u)
                 if (focus) { paint.color = ink; val g = 3 * u; paint.style = Paint.Style.STROKE; paint.strokeWidth = g; rect.inset(-g / 2, -g / 2); c.drawRoundRect(rect, 24 * u + g / 2, 24 * u + g / 2, paint); rect.inset(g / 2, g / 2); paint.style = Paint.Style.FILL }
                 if (on || focus) { paint.color = if (on) ink else inkA(41); c.drawRoundRect(rect, 24 * u, 24 * u, paint) }
-                text.color = if (on) (if (look == Look.LIGHT) Color.WHITE else Color.rgb(17, 17, 17)) else if (focus) ink else inkA(199)
+                text.color = if (on) Color.rgb(17, 17, 17) else if (focus) ink else inkA(199)
                 c.drawText(people[i].label, x + 20 * u, 91 * u, text)
                 x += pw[i] + 8 * u
             }
@@ -1042,7 +1042,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         paint.color = if (app != null) Color.rgb(42, 42, 48) else inkA(36)
         paint.alpha = if (moving && !focused) 178 else if (app != null) 255 else 36
         if (glassy) gstyle.iconTile(c, x, y, x + size, y + size, radius, glassBmp, height / 1080f, focused)
-        else c.drawRoundRect(rect, radius, radius, paint)
+        else if (app == null || icons.hasBackground(app)) c.drawRoundRect(rect, radius, radius, paint)   // a plain (not layered) icon gets no tile behind it
         if (app != null) {
             val bmp = if (glassy) null else icons.square(app, size.toInt().coerceAtLeast(1))
             if (glassy) glassGlyph(c, u, app, x, y, size, size, focused, false, radius)
@@ -1258,7 +1258,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
             if (index == store.line) { text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.textAlign = Paint.Align.CENTER; c.drawText("Settings", x + w / 2, y + h / 2 + 8 * u, text) }
             else glyph(c, u, x + w / 2, y + h / 2, 112 * u * 0.7f, false)
         } else {   // the house's own tiles: a dark gradient, the name or three dots
-            paint.shader = LinearGradient(x, y, x + w * 0.4f, y + h, if (look == Look.LIGHT) Color.rgb(252, 253, 255) else Color.rgb(44, 44, 51), if (look == Look.LIGHT) Color.rgb(219, 223, 232) else Color.rgb(26, 26, 31), Shader.TileMode.CLAMP)
+            paint.shader = LinearGradient(x, y, x + w * 0.4f, y + h, Color.rgb(44, 44, 51), Color.rgb(26, 26, 31), Shader.TileMode.CLAMP)
             c.drawRect(rect, paint); paint.shader = null
             if (index == smartIdx() || index == gearIdx()) { text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.textAlign = Paint.Align.CENTER; c.drawText(if (index == smartIdx()) PS.SMART_HOME else "Settings", x + w / 2, y + h / 2 + 8 * u, text) }
             else glyph(c, u, x + w / 2, y + h / 2, 112 * u * 0.7f, false)

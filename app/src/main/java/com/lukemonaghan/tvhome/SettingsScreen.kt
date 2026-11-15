@@ -80,7 +80,6 @@ class SettingsScreen(
                 Row("OLED", "Pure black, a grid of your apps", check = look == "OLED") { pick("OLED") },
                 Row("Classic", "One photo and a grid of app banners", check = look == "CLASSIC") { pick("CLASSIC") },
                 Row("Dark", "A solid dark colour, a grid of your apps", check = look == "DARK") { pick("DARK") },
-                Row("Light", "A solid light colour, a grid of your apps", check = look == "LIGHT") { pick("LIGHT") },
                 Row("Follow the time of day", "Dawn, day, sunset and night pick the scene and photo", check = prefs.getBoolean("timeSync", true)) {
                     prefs.edit().putBoolean("timeSync", !prefs.getBoolean("timeSync", true)).apply()
                 },

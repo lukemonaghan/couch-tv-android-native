@@ -23,6 +23,7 @@ class Icons(private val ctx: Context, private val onLoaded: () -> Unit) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
     private val pending = HashSet<String>()
+    private val layered = java.util.concurrent.ConcurrentHashMap<String, Boolean>()   // package -> its icon has its own background layer (an adaptive icon)
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
@@ -53,6 +54,7 @@ class Icons(private val ctx: Context, private val onLoaded: () -> Unit) {
                     Glyphs.hdmi(Canvas(out), Paint(Paint.ANTI_ALIAS_FLAG), size / 2f, size / 2f, size * 0.66f / 24f); out
                 } else {
                     val ic = app.ri!!.activityInfo.loadIcon(ctx.packageManager)
+                    layered[app.pkg] = android.os.Build.VERSION.SDK_INT >= 26 && ic is android.graphics.drawable.AdaptiveIconDrawable
                     ic.setBounds(0, 0, size, size); ic.draw(Canvas(out)); out
                 }
             }.getOrNull()
@@ -60,6 +62,12 @@ class Icons(private val ctx: Context, private val onLoaded: () -> Unit) {
         }
         return null
     }
+
+    /**
+     * Whether the app's icon brings its own background (an adaptive icon: a foreground and a background layer). Only those get a
+     * tile; a plain icon is drawn straight on the scene. True until the icon has loaded, and for TV inputs, so tiles do not flash.
+     */
+    fun hasBackground(app: AppItem): Boolean = app.inputId != null || layered[app.pkg] != false
 
     private fun draw(app: AppItem, w: Int, h: Int): Bitmap {
         val pm = ctx.packageManager

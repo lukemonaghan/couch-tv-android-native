@@ -45,7 +45,7 @@ class GlassStyle(private val looks: Looks) {
                      shadowAlpha: Int, edgeWidth: Float = 1f) {
         rect.set(l, t, r, b)
         clip.reset(); clip.addRoundRect(rect, radius, radius, Path.Direction.CW)
-        if ((st.rich && !st.plum) || st.muted || st.light) shadow(c, radius, shadowDy * px, shadowSpread * px, if (st.light) shadowAlpha / 2 else shadowAlpha)
+        if ((st.rich && !st.plum) || st.muted) shadow(c, radius, shadowDy * px, shadowSpread * px, shadowAlpha)
         rect.set(l, t, r, b)
         c.save(); c.clipPath(clip)
         if (base != null && looks.blurPx > 0f) c.drawBitmap(base, 0f, 0f, null)
@@ -76,7 +76,7 @@ class GlassStyle(private val looks: Looks) {
             c.drawRoundRect(rect, radius, radius, paint)
             c.restore()
         } else {
-            paint.color = if (st.light) Color.argb(46, 0, 0, 0) else if (st.muted) Color.argb(28, 255, 255, 255) else Color.argb(edgeAlpha, 255, 255, 255)
+            paint.color = if (st.muted) Color.argb(28, 255, 255, 255) else Color.argb(edgeAlpha, 255, 255, 255)
             rect.set(l, t, r, b); rect.inset(px * edgeWidth / 2, px * edgeWidth / 2)
             c.drawRoundRect(rect, radius, radius, paint)
             if (st.rich) {

@@ -225,7 +225,7 @@ class NowPlaying(
         val x = if (night) 80 * u else (width - w) / 2f
         val y = 44 * u
         val r = 30 * u * floatArrayOf(0.55f, 1f, 1.45f)[prefs.getInt("roundness", 1).coerceIn(0, 2)]
-        val ringColor = if (prefs.getString("look", null) == "LIGHT") Color.rgb(22, 24, 31) else Color.WHITE
+        val ringColor = Color.WHITE
         c.save()
         if (focused && !ambientOpen) { c.translate(x + w / 2, y + h / 2); c.scale(1.05f, 1.05f); c.translate(-(x + w / 2), -(y + h / 2)) }
         if (focused && !ambientOpen) {
