@@ -8,10 +8,10 @@ import java.util.Locale
  * The "Music visualiser" page of Home settings: how the MilkDrop background behaves, and the preset browser.
  * Browsing goes Category, then Group, then single presets. OK on a category or group row opens it, and the first row of
  * each level downloads or removes everything in it. Nothing is installed until asked: [PresetStore] fetches only what is picked.
- * Prefs (home): np_viz, np_eq, np_lyrics_hidden, viz_q, viz_fps, viz_secs, viz_bright (20 to 100), viz_autohide, viz_slow (see Visualiser.kt).
+ * Prefs (home): np_viz, np_lyrics_hidden, viz_q, viz_fps, viz_secs, viz_bright (20 to 100), viz_autohide, viz_slow (see Visualiser.kt).
  */
 object VizSettings {
-    /** "" is the top of the page; "mine" browses what is installed, "favs" lists the favourites, "get" browses the whole collection to download. */
+    /** "" is the top of the page; "mine" browses what is installed, "favs" lists the favourites, "skipped" the presets that were skipped as too slow, "get" browses the whole collection to download. */
     private var area = ""
     private var cat: String? = null
     private var group: String? = null
@@ -96,7 +96,11 @@ object VizSettings {
             val n = paths.count { it !in off }
             val allOn = n == paths.size
             val ask = listOf("Cancel" to {}, (if (allOn) "Yes, turn all ${paths.size} off" else "Yes, turn all ${paths.size} on") to { PresetStore.setOff(p, paths, allOn); Unit })
-            return IdleSettings.Item(title, "OK turns them all on or off, after asking", if (allOn) "" else "$n of ${paths.size} on", check = allOn, menu = ask)
+            val nFav = paths.count { it in favs }
+            val more = ArrayList<Pair<String, () -> Unit>>()
+            if (nFav < paths.size) more += "Add all ${paths.size} to favourites" to { PresetStore.setFav(p, paths, true); Unit }
+            if (nFav > 0) more += "Remove all from favourites" to { PresetStore.setFav(p, paths, false); Unit }
+            return IdleSettings.Item(title, "OK turns them all on or off, after asking. Hold OK for favourites", if (allOn) "" else "$n of ${paths.size} on", check = allOn, menu = ask, holdMenu = more)
         }
         fun sizeOf(path: String): Int {
             val (cc, gg, ff) = path.split('/', limit = 3)
@@ -104,6 +108,20 @@ object VizSettings {
         }
 
         val a = area; val c = cat; val g = group
+
+        if (a == "skipped") {
+            out += IdleSettings.Item("SKIPPED PRESETS", header = true)
+            val list = skipped.sortedBy { nameOf(it).lowercase(Locale.ROOT) }
+            if (list.isEmpty()) out += IdleSettings.Item("None skipped", "A preset lands here when it runs too slowly or fails on this TV")
+            else {
+                out += IdleSettings.Item("Let all ${list.size} try again", "They are played again, and skipped again if they still fail", "") { p.edit().remove("viz_slow").apply(); PresetStore.onChange?.invoke() }
+                out += IdleSettings.Item("PRESETS", header = true)
+                for (path in list) out += IdleSettings.Item(nameOf(path), "OK lets it try again  ·  " + path.substringBeforeLast('/').replace("/", "  ›  "), preview = path) {
+                    p.edit().putStringSet("viz_slow", HashSet(skipped).apply { remove(path) }).apply(); PresetStore.onChange?.invoke()
+                }
+            }
+            return out
+        }
 
         if (a == "favs") {
             out += IdleSettings.Item("FAVOURITES", header = true)
@@ -149,14 +167,13 @@ object VizSettings {
         if (a == "") {
             out += IdleSettings.Item("MUSIC VISUALISER", header = true)
             out += IdleSettings.Item("Show the visualiser", "MilkDrop visuals behind the music view, moving with the music", check = p.getBoolean("np_viz", true)) { p.edit().putBoolean("np_viz", !p.getBoolean("np_viz", true)).apply() }
-            out += IdleSettings.Item("Show EQ bars", "The little bars that move with the music, above the progress bar", check = p.getBoolean("np_eq", true)) { p.edit().putBoolean("np_eq", !p.getBoolean("np_eq", true)).apply() }
             out += IdleSettings.Item("Picture quality", "Drawn smaller and scaled up. Lower is smoother on an older TV", QUALITY[p.getInt("viz_q", 1).coerceIn(0, 2)]) { p.edit().putInt("viz_q", (p.getInt("viz_q", 1) + 1) % 3).apply() }
             out += IdleSettings.Item("Frame rate", "30 is easier on the TV", "${p.getInt("viz_fps", 30)} per second") { p.edit().putInt("viz_fps", if (p.getInt("viz_fps", 30) == 30) 60 else 30).apply() }
             out += IdleSettings.Item("New preset every", "Left and right change it by hand", SECS.let { s -> val v = p.getInt("viz_secs", 45); if (v == 0) "Only by hand" else if (v >= 60) "${v / 60} min${if (v % 60 != 0) " ${v % 60} s" else ""}" else "$v seconds" }) { p.edit().putInt("viz_secs", next(SECS, p.getInt("viz_secs", 45))).apply() }
             out += IdleSettings.Item("Brightness", "How bright the visualiser is. With the buttons hidden, up and down change it", "${p.getInt("viz_bright", 100)}%") { val b = p.getInt("viz_bright", 100); p.edit().putInt("viz_bright", if (b <= 20) 100 else b - 10).apply() }
             out += IdleSettings.Item("Hide the buttons after", "Fades the words and buttons so only the visualiser shows. Any key brings them back", p.getInt("viz_autohide", 0).let { if (it == 0) "Never" else "$it seconds" }) { p.edit().putInt("viz_autohide", next(HIDE, p.getInt("viz_autohide", 0))).apply() }
             out += IdleSettings.Item("Lyrics with the buttons hidden", "Keep the lyrics showing, in the middle of the screen, when the buttons are hidden. Needs Show lyrics on", check = p.getBoolean("np_lyrics_hidden", false)) { p.edit().putBoolean("np_lyrics_hidden", !p.getBoolean("np_lyrics_hidden", false)).apply() }
-            out += IdleSettings.Item("Skipped presets", "Ones that ran too slowly or failed on this TV. OK lets them try again", "${skipped.size}") { p.edit().remove("viz_slow").apply() }
+            out += IdleSettings.Item("Skipped presets", "Ones that ran too slowly or failed on this TV. OK to see them and let any try again", "${skipped.size}") { go("skipped", null, null) }
 
             if (installed.isNotEmpty()) {
                 out += IdleSettings.Item("YOUR PRESETS", header = true)

@@ -75,6 +75,6 @@ Seeded prefs by writing `shared_prefs/home.xml` (script idea: push XML to /data/
 - Not done yet: favourites you can mark in the app (the 64 starter presets are a fixed list), brightness above 100%, a first-run prompt, checking the arm64 build on a real TV.
 
 ## Music view and preset browser (2026-11-16, later)
-- Music view buttons: play/pause exactly centred with previous and next; eye and next-preset (with the preset name) on the left; hint, stop and the app button on the right. Lyrics can stay up, centred on the screen, when the buttons are hidden (Settings, "Lyrics with the buttons hidden"). EQ bars show with or without the visualiser ("Show EQ bars").
+- Music view buttons: play/pause exactly centred with previous and next; eye and next-preset (with the preset name) on the left; hint, stop and the app button on the right. Lyrics can stay up, centred on the screen, when the buttons are hidden (Settings, "Lyrics with the buttons hidden"). There are no EQ bars any more (they shrank to fit their space).
 - Settings, Music visualiser: "Browse your presets" (installed only: category, group, preset), "Favourites", and "Play: everything that is on / favourites only". OK on a preset opens Add to favourites, Turn off and Remove. A turned-off preset is never played. A live 320 x 180 preview of the focused preset sits beside the list (PresetPreview.kt, z-on-top GLSurfaceView, 20 fps); presets that are skipped or not installed show text instead.
-- Prefs: viz_fav, viz_off, viz_favs_only, np_eq, np_lyrics_hidden. Not yet tried on a real TV.
+- Prefs: viz_fav, viz_off, viz_favs_only, np_lyrics_hidden. Not yet tried on a real TV.

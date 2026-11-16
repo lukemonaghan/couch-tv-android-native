@@ -49,7 +49,11 @@ object ListMenu {
         private val rect = RectF()
         init { isFocusable = true; isFocusableInTouchMode = true }
 
+        // OK acts on its release, but only a release whose press this menu saw: a menu that opens while OK is still held (hold OK) must not take that release as a choice
+        private var armed = false
+
         override fun onKeyDown(code: Int, e: KeyEvent): Boolean {
+            if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) { if (e.repeatCount == 0) armed = true; return true }
             when (code) {
                 KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_LEFT -> { if (sel > 0) sel--; invalidate(); return true }
                 KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT -> { if (sel < labels.size - 1) sel++; invalidate(); return true }
@@ -59,7 +63,7 @@ object ListMenu {
         }
 
         override fun onKeyUp(code: Int, e: KeyEvent): Boolean {
-            if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) { done(sel); return true }
+            if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) { if (armed) { armed = false; done(sel) }; return true }
             return super.onKeyUp(code, e)
         }
 

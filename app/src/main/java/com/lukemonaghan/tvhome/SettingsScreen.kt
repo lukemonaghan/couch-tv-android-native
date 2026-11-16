@@ -26,7 +26,8 @@ class SettingsScreen(
     init { peopleSettings.onNavigate = { row = 0; scroll = 0 }; peopleSettings.redraw = { changed() } }
     private class Row(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
                        val header: Boolean = false, val avatar: Person? = null,
-                       val preview: String? = null, val menu: List<Pair<String, () -> Unit>>? = null, val press: (() -> Unit)? = null)
+                       val preview: String? = null, val menu: List<Pair<String, () -> Unit>>? = null,
+                       val holdMenu: List<Pair<String, () -> Unit>>? = null, val press: (() -> Unit)? = null)
 
     private val lookSet by lazy { LookSettings(ctx, prefs, act, changed) }
     private fun LookRow.row() = Row(title, note, value, check, header, null, press = press)
@@ -150,7 +151,7 @@ class SettingsScreen(
         "Smart home" -> PlatformPages.smart(ctx).map(::pr)
         "Updates" -> PlatformPages.updates(ctx).map(::pr)
         "Idle and sound" -> IdleSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, press = it.press) }
-        "Music visualiser" -> VizSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.preview, it.menu, it.press) }
+        "Music visualiser" -> VizSettings.rows(ctx, prefs).map { Row(it.title, it.note, it.value, it.check, it.header, null, it.preview, it.menu, it.holdMenu, it.press) }
         else -> PlatformPages.aboutTop(ctx).map(::pr) + listOf(
             Row("tvhome", "A light home screen for Android TV", "0.1"),
             Row("Licences", "projectM LGPL-2.1, fonts OFL-1.1, couch-tv MIT", "Source: github.com/lukemonaghan"),
@@ -164,6 +165,7 @@ class SettingsScreen(
 
     /** Hold OK on a switched-on quick button picks it up to reorder. False when the row is not one. */
     fun hold(): Boolean {
+        if (inRows && pages[page] == "Music visualiser") { val m = rows().getOrNull(row)?.holdMenu ?: return false; openMenu(m); return true }
         if (!inRows || pages[page] != "Quick buttons") return false
         val id = QuickButtons.listed(prefs).getOrNull(row) ?: return false
         if (id !in QuickButtons.enabled(prefs)) return false

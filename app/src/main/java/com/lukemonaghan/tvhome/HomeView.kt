@@ -87,9 +87,12 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     /** The MilkDrop visualiser behind the music view (MainActivity adds and removes the view). */
     var vizHook: ((Boolean) -> Unit)? = null
     var vizStep: ((Int) -> Unit)? = null
+    var vizPick: (() -> Unit)? = null
     private var vizOn = false
     fun vizLive(on: Boolean) { np.vizLive = on; invalidate() }
     fun vizName(n: String) = np.presetName(n)
+    fun vizNowName() = np.vizName
+    fun vizPicker(on: Boolean) = np.pickerUi(on)
     val audio get() = np.audio
     init { looks.onChanged { sceneKey = ""; invalidate(); videoHook?.invoke() } }
     private val watch = WatchNext(ctx) { ci = ci.coerceIn(0, maxOf(0, cards().size - 1)); if (cards().isEmpty() && mode == Mode.CARDS) mode = Mode.DOCK; invalidate() }
@@ -107,7 +110,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         { mode == Mode.DOCK || mode == Mode.CARDS || mode == Mode.TOP || mode == Mode.NP })
     private val fx = AmbientFx(prefs, weather) { postInvalidateDelayed(40) }
     private val np = NowPlaying(ctx, prefs, { act.launch(it) }) { auto -> onNowPlaying(auto) }
-    init { np.onPreset = { vizStep?.invoke(it) } }
+    init { np.onPreset = { vizStep?.invoke(it) }; np.onPick = { vizPick?.invoke() } }
 
     /** The music changed: a new song may open the full screen view, and a card that has gone gives the remote back. */
     private fun onNowPlaying(auto: Boolean) {
@@ -527,6 +530,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         when (mode) {
             Mode.CARDS -> if (!cardMenu && cards().isNotEmpty()) { cardMenu = true; cardMenuPick = 0 }
             Mode.SETTINGS -> settings.hold()
+            Mode.NP -> np.hold()
             Mode.POP -> peopleUi.lift()
             Mode.DOCK -> if (fi < store.line) openMenu(fi)
             Mode.MORE -> {

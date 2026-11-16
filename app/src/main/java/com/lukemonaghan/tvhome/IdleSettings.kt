@@ -16,7 +16,8 @@ import android.provider.Settings
 object IdleSettings {
     /** [preview]: a preset path to show in the preview panel while this row is focused. [menu]: if set, OK opens these choices instead of [press]. */
     class Item(val title: String, val note: String = "", val value: String = "", val check: Boolean? = null,
-               val header: Boolean = false, val preview: String? = null, val menu: List<Pair<String, () -> Unit>>? = null, val press: (() -> Unit)? = null)
+               val header: Boolean = false, val preview: String? = null, val menu: List<Pair<String, () -> Unit>>? = null,
+               val holdMenu: List<Pair<String, () -> Unit>>? = null, val press: (() -> Unit)? = null)
 
     private val HOME_STEPS = listOf(0, 5, 10, 15, 30, 60)
     private val PAUSED_STEPS = listOf(0, 10, 15, 20, 30, 45, 60)

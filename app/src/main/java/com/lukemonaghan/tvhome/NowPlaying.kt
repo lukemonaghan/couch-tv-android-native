@@ -72,6 +72,7 @@ class NowPlaying(
         set(v) { if (field != v) { val name = items().getOrNull(ambBtn); field = v; ambBtn = items().indexOf(name).takeIf { it >= 0 } ?: playIdx() } }
     private fun playIdx() = items().indexOf("play")
     var vizName = ""                          // the preset playing now
+    var onPick: (() -> Unit)? = null           // hold OK on the next-preset button: the home opens the preset picker
     var onPreset: ((Int) -> Unit)? = null     // +1 / -1: the next / previous preset (the home passes it to the visualiser)
     val audio get() = viz
     /** The music view can run the visualiser: the engine is in the app, presets are installed, and it is not switched off in Settings. */
@@ -89,8 +90,11 @@ class NowPlaying(
     private var brightAt = 0L                 // when the brightness was last changed with the keys (the slider shows for a moment)
     private fun bright() = prefs.getInt("viz_bright", 100).coerceIn(20, 100)
     private fun adjustBright(d: Int) { prefs.edit().putInt("viz_bright", (bright() + d).coerceIn(20, 100)).apply(); brightAt = SystemClock.uptimeMillis(); changed(false) }
-    private fun resetOv() { hidden = false; ovFrom = 1f; ovTo = 1f; ovAt = 0L; lastKeyAt = SystemClock.uptimeMillis() }
+    private var pickerOn = false              // the preset picker is open: nothing (a new song, say) may bring the overlays back
+    private fun resetOv() { if (pickerOn) return; hidden = false; ovFrom = 1f; ovTo = 1f; ovAt = 0L; lastKeyAt = SystemClock.uptimeMillis() }
     private fun setHidden(h: Boolean) { if (hidden == h) return; ovFrom = overlay(); hidden = h; ovTo = if (h) 0f else 1f; ovAt = SystemClock.uptimeMillis(); changed(false) }
+    /** The preset picker is open: its own card is all that shows, so the visualiser behind can be seen; back when it closes. */
+    fun pickerUi(on: Boolean) { if (!vizLive) return; pickerOn = on; if (on) setHidden(true) else { setHidden(false); lastKeyAt = SystemClock.uptimeMillis() } }
     fun presetName(n: String) { vizName = n; nameAt = SystemClock.uptimeMillis(); changed(false) }
     /** Back in the music view: brings hidden overlays back first. True when that was all it did. */
     fun backPressed(): Boolean { if (vizLive && hidden) { setHidden(false); lastKeyAt = SystemClock.uptimeMillis(); return true }; return false }
@@ -161,7 +165,7 @@ class NowPlaying(
             if (lyricsOn) Lyrics.fetch(artist, title, album, (dur / 1000).toInt()) { l -> main.post { if (lastTrackKey == key) { lyr = l; lyrDone = true; changed(false) } } }
         }
         val auto = newTrack && ambientOn && !ambientDismissed
-        if (auto) { resetOv(); ambientOpen = true; ambBtn = playIdx() }
+        if (auto) { resetOv(); val wasOpen = ambientOpen; ambientOpen = true; if (!wasOpen) ambBtn = playIdx() }   // already open (skip pressed): the focus stays on the button
         changed(auto)
     }
 
@@ -240,6 +244,14 @@ class NowPlaying(
     fun openAmbient(): Boolean { if (!visible) return false; resetOv(); ambientOpen = true; ambientDismissed = false; ambBtn = playIdx(); changed(false); return true }
 
     fun closeAmbient(dismiss: Boolean) { ambientOpen = false; viz.stop(); resetOv(); if (dismiss) ambientDismissed = true; focus() }
+
+    /** Hold OK in the music view: on the next-preset button it opens the picker. True when it did. */
+    fun hold(): Boolean {
+        if (!ambientOpen || !vizLive || hidden) return false
+        lastKeyAt = SystemClock.uptimeMillis()
+        if (items().getOrNull(ambBtn) != "preset") return false
+        onPick?.invoke(); return true
+    }
 
     fun press() {
         val t = track ?: return
@@ -481,22 +493,6 @@ class NowPlaying(
         c.drawText(title, 0, title.length, right, titleBase, text)
         text.textAlign = Paint.Align.LEFT
 
-        // the equaliser, with or without the visualiser: between the cover and the words, along the bottom of that band
-        if (prefs.getBoolean("np_eq", true)) {
-            val ex0 = m + artS + 70 * u; val ex1 = right - metaW - 70 * u
-            if (ex1 - ex0 > 240 * u) {
-                val n = AudioViz.BANDS; val eqH = 110 * u
-                val slot = (ex1 - ex0) / n; val bw = slot * 0.62f
-                paint.color = Color.argb(150, 255, 255, 255)
-                for (i in 0 until n) {
-                    val lv = if (viz.live) viz.bands[i] else if (t.playing) (0.18f + 0.5f * (0.5f + 0.5f * sin(now / 260.0 + i * 0.7)).toFloat() * (0.5f + 0.5f * sin(now / 900.0 + i * 0.3)).toFloat()) else 0.06f
-                    val hh = (eqH * lv.coerceIn(0.05f, 1f))
-                    rect.set(ex0 + i * slot, coverBottom - hh, ex0 + i * slot + bw, coverBottom)
-                    c.drawRoundRect(rect, bw / 2, bw / 2, paint)
-                }
-            }
-        }
-
         // the bottom band: progress, then the buttons, then the hints on the left
         text.typeface = Fonts.regular(ctx); text.textSize = 20 * u; text.color = Color.argb(179, 255, 255, 255)
         c.drawText(fmt(pos), m + 10 * u, barY + 7 * u, text)
@@ -551,7 +547,7 @@ class NowPlaying(
         }
         text.textAlign = Paint.Align.RIGHT
         text.textSize = 18 * u; text.color = Color.argb(150, 255, 255, 255)
-        val hint = TextUtils.ellipsize("▼ Press Down or Back for apps", text, stopX - rS - gap - (nextX + rS + gap), TextUtils.TruncateAt.END)
+        val hint = TextUtils.ellipsize(if (items().getOrNull(ambBtn) == "preset") "Hold OK to choose a preset" else "▼ Press Down or Back for apps", text, stopX - rS - gap - (nextX + rS + gap), TextUtils.TruncateAt.END)
         c.drawText(hint, 0, hint.length, stopX - rS - gap, hy, text)
         text.textAlign = Paint.Align.LEFT
         if (lyricsOn && !keepLyr) drawLyrics(c, w, h, u, pos)

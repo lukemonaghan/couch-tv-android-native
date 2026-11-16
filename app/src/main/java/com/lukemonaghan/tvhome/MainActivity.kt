@@ -49,6 +49,17 @@ class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
         root.addView(home, android.widget.FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
         home.vizHook = { on -> main.post { if (on) startViz() else stopViz() } }
+        home.vizPick = {
+            viz?.let { v ->
+                val before = v.nowPath
+                home.vizPicker(true)
+                // hovering a preset plays it behind the card; OK keeps it, closing any other way puts the old one back
+                PresetPicker.show(this, getSharedPreferences("home", MODE_PRIVATE), home.vizNowName(), { path -> v.play(path) }, { v.repool() }) { path ->
+                    home.vizPicker(false)
+                    if (path != null) { if (path != v.nowPath) v.play(path) } else if (before.isNotEmpty() && before != v.nowPath) v.play(before)
+                }
+            }
+        }
         home.vizStep = { d -> viz?.let { if (d > 0) it.next() else it.previous() } }
         FireWatch.ensure(this)   // only once a computer has granted WRITE_SECURE_SETTINGS over ADB
         main.postDelayed({ FireWatch.rebindIfUnbound(applicationContext) }, 10_000L)   // listed but not bound after a force-stop

@@ -37,7 +37,15 @@ class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val
         setRenderer(Draw(intArrayOf(640, 960, 1280)[q], intArrayOf(360, 540, 720)[q]))
     }
 
+    @Volatile private var wantPath: String? = null
+    /** The preset playing now (a path under filesDir/presets), so the picker can put it back. */
+    @Volatile var nowPath = ""
+    @Volatile private var reload = false
+    /** The set of presets to rotate through changed (Play favourites only, say): rebuild it on the next frame. */
+    fun repool() { reload = true }
     fun next() { step = 1 }
+    /** Plays this preset now (a path under filesDir/presets), chosen in the music view's picker. */
+    fun play(path: String) { wantPath = path }
     fun previous() { step = -1 }
 
     /** Stops the player on its own thread, where the GL context lives, then lets the thread go. */
@@ -64,13 +72,17 @@ class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val
         private var pcm = FloatArray(1024); private var lastSeq = -1; private var tone = 0.0
         private var lastFrame = 0L
 
-        override fun onSurfaceCreated(g: GL10?, c: EGLConfig?) {
-            prefs.getString("viz_loading", null)?.let { markSlow(it); prefs.edit().remove("viz_loading").apply() }   // it did not come back last time
+        private fun buildOrder() {
             val skip = slow()
             val off = PresetStore.off(prefs)
             var pool = PresetStore.installed(context).filter { it !in skip && it !in off }
             if (prefs.getBoolean("viz_favs_only", false)) { val f = PresetStore.favs(prefs); pool.filter { it in f }.takeIf { it.isNotEmpty() }?.let { pool = it } }
             order = pool.shuffled()
+        }
+
+        override fun onSurfaceCreated(g: GL10?, c: EGLConfig?) {
+            prefs.getString("viz_loading", null)?.let { markSlow(it); prefs.edit().remove("viz_loading").apply() }   // it did not come back last time
+            buildOrder()
             val r = ProjectM.init(PresetStore.textures(context).path + "/", w, h, fps, 32, 24)
             ready = r == "ok" && order.isNotEmpty()
             if (!ready) Log.w("tvhome", "visualiser not started: $r, ${order.size} presets")
@@ -82,7 +94,7 @@ class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val
         private fun play(path: String) {
             prefs.edit().putString("viz_loading", path).commit()
             ProjectM.load(File(root, path).path, current.isNotEmpty())
-            current = path; loadedAt = SystemClock.uptimeMillis(); judgeFrom = loadedAt + 1500; framesSince = 0; frames = 0
+            current = path; nowPath = path; loadedAt = SystemClock.uptimeMillis(); judgeFrom = loadedAt + 1500; framesSince = 0; frames = 0
             val label = path.substringAfterLast('/').removeSuffix(".milk")
             main.post { onPreset(label) }
         }
@@ -101,7 +113,10 @@ class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val
             val now = SystemClock.uptimeMillis()
             val secs = prefs.getInt("viz_secs", 45)
             val s = step
-            if (s != 0) { step = 0; advance(s) }
+            if (reload) { reload = false; buildOrder(); pos = order.indexOf(current) }
+            val picked = wantPath
+            if (picked != null) { wantPath = null; if (File(root, picked).exists()) { pos = order.indexOf(picked).coerceAtLeast(-1); history.add(picked); if (history.size > 30) history.removeAt(0); play(picked) } }
+            else if (s != 0) { step = 0; advance(s) }
             else if (current.isEmpty() || (secs > 0 && now - loadedAt > secs * 1000L)) advance(1)
             // the waveform: a new capture each time there is one; a soft pulse when this TV gives no audio tap
             if (audio.live) {
