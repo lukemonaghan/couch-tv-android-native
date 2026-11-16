@@ -13,7 +13,7 @@ import kotlin.math.sin
 /**
  * The little live picture beside the preset list in Settings: projectM drawing the focused preset at 320 x 180 (a fraction of the
  * pixels of the real thing, so even a weak GPU keeps up), with a calm made-up beat for sound. It sits on top of the window at the
- * rectangle Settings gives it (MainActivity.vizPreview) and is taken away when Settings stops showing a preset.
+ * rectangle Settings gives it (a skipped preset plays smaller still, 160 x 90 at 12 frames a second) (MainActivity.vizPreview) and is taken away when Settings stops showing a preset.
  * Moving the focus waits half a second before loading, so scrolling fast does not load every preset on the way. It never marks a
  * preset slow; it only uses the same crash marker as the music view ("viz_loading") so a preset that crashes the app is skipped later.
  */
@@ -29,7 +29,13 @@ class PresetPreview(ctx: Context, private val prefs: SharedPreferences) : GLSurf
         setRenderer(Draw())
     }
 
-    fun show(path: String) { if (path != want) { want = path; wantAt = SystemClock.uptimeMillis() } }
+    @Volatile private var low = false
+    /** Skipped presets (too slow or failed on this TV) still play here, but tiny and slow, so a weak GPU can cope. */
+    fun show(path: String) {
+        if (path != want) { want = path; wantAt = SystemClock.uptimeMillis() }
+        val slow = path in (prefs.getStringSet("viz_slow", emptySet()) ?: emptySet())
+        if (slow != low) { low = slow; if (slow) holder.setFixedSize(LOW_W, LOW_H) else holder.setFixedSize(W, H) }
+    }
 
     fun shutDown() {
         stopped = true
@@ -75,9 +81,10 @@ class PresetPreview(ctx: Context, private val prefs: SharedPreferences) : GLSurf
             if (++frames == 40) prefs.edit().remove("viz_loading").apply()
             ProjectM.takeFailed()
             val spent = SystemClock.uptimeMillis() - now
-            if (spent < 1000L / FPS) try { Thread.sleep(1000L / FPS - spent) } catch (_: InterruptedException) {}
+            val fps = if (low) LOW_FPS else FPS
+            if (spent < 1000L / fps) try { Thread.sleep(1000L / fps - spent) } catch (_: InterruptedException) {}
         }
     }
 
-    companion object { const val W = 320; const val H = 180; const val FPS = 20 }
+    companion object { const val W = 320; const val H = 180; const val FPS = 20; const val LOW_W = 160; const val LOW_H = 90; const val LOW_FPS = 12 }
 }

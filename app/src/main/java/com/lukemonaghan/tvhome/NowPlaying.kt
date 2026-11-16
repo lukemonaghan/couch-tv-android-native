@@ -18,9 +18,12 @@ import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.text.Layout
+import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.view.KeyEvent
+import kotlin.math.cos
 import kotlin.math.sin
 
 /**
@@ -72,7 +75,9 @@ class NowPlaying(
         set(v) { if (field != v) { val name = items().getOrNull(ambBtn); field = v; ambBtn = items().indexOf(name).takeIf { it >= 0 } ?: playIdx() } }
     private fun playIdx() = items().indexOf("play")
     var vizName = ""                          // the preset playing now
-    var onPick: (() -> Unit)? = null           // hold OK on the next-preset button: the home opens the preset picker
+    var onFav: (() -> Unit)? = null            // OK on the star button: the home stars or unstars the preset playing now
+    var favQuery: (() -> Boolean)? = null      // whether the preset playing now is a favourite
+    var onPick: (() -> Unit)? = null           // OK on the preset button: the home opens the preset picker
     var onPreset: ((Int) -> Unit)? = null     // +1 / -1: the next / previous preset (the home passes it to the visualiser)
     val audio get() = viz
     /** The music view can run the visualiser: the engine is in the app, presets are installed, and it is not switched off in Settings. */
@@ -97,10 +102,17 @@ class NowPlaying(
     fun pickerUi(on: Boolean) { if (!vizLive) return; pickerOn = on; if (on) setHidden(true) else { setHidden(false); lastKeyAt = SystemClock.uptimeMillis() } }
     fun presetName(n: String) { vizName = n; nameAt = SystemClock.uptimeMillis(); changed(false) }
     /** Back in the music view: brings hidden overlays back first. True when that was all it did. */
+    /** Channel up and down in the music view: the next and the previous preset. True when it was used. */
+    fun channel(up: Boolean): Boolean {
+        if (!ambientOpen || !vizLive) return false
+        lastKeyAt = SystemClock.uptimeMillis()
+        onPreset?.invoke(if (up) 1 else -1)
+        return true
+    }
     fun backPressed(): Boolean { if (vizLive && hidden) { setHidden(false); lastKeyAt = SystemClock.uptimeMillis(); return true }; return false }
     private fun items(): List<String> {
         val l = ArrayList<String>()
-        if (vizLive) { l.add("eye"); l.add("preset") }
+        if (vizLive) { l.add("eye"); l.add("preset"); l.add("fav") }
         l.addAll(listOf("prev", "play", "next", "stop", "app"))
         return l
     }
@@ -165,7 +177,7 @@ class NowPlaying(
             if (lyricsOn) Lyrics.fetch(artist, title, album, (dur / 1000).toInt()) { l -> main.post { if (lastTrackKey == key) { lyr = l; lyrDone = true; changed(false) } } }
         }
         val auto = newTrack && ambientOn && !ambientDismissed
-        if (auto) { resetOv(); val wasOpen = ambientOpen; ambientOpen = true; if (!wasOpen) ambBtn = playIdx() }   // already open (skip pressed): the focus stays on the button
+        if (auto) { val wasOpen = ambientOpen; if (!wasOpen) { resetOv(); ambBtn = playIdx() }; ambientOpen = true }   // already open: a new song leaves the focus on its button and the buttons hidden if they were
         changed(auto)
     }
 
@@ -210,12 +222,10 @@ class NowPlaying(
     fun key(code: Int): Boolean {
         if (ambientOpen) {
             lastKeyAt = SystemClock.uptimeMillis()
-            if (vizLive && hidden) {   // only the visualiser shows: left and right change the preset, anything else brings the buttons back
+            if (vizLive && hidden) {   // only the visualiser shows: left and right change the brightness, anything else (up, down, OK) brings the buttons back
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_LEFT -> onPreset?.invoke(-1)
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> onPreset?.invoke(1)
-                    KeyEvent.KEYCODE_DPAD_UP -> adjustBright(10)      // up and down are a brightness slider while only the visualiser shows
-                    KeyEvent.KEYCODE_DPAD_DOWN -> adjustBright(-10)
+                    KeyEvent.KEYCODE_DPAD_LEFT -> adjustBright(-10)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> adjustBright(10)
                     else -> setHidden(false)
                 }
                 return true
@@ -226,6 +236,7 @@ class NowPlaying(
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (ambBtn > 0) ambBtn--
                 KeyEvent.KEYCODE_DPAD_RIGHT -> if (ambBtn < n - 1) ambBtn++
                 KeyEvent.KEYCODE_DPAD_DOWN -> closeAmbient(true)
+                KeyEvent.KEYCODE_DPAD_UP -> if (vizLive) setHidden(true)   // up hides the buttons, like the eye button
             }
             return true
         }
@@ -245,13 +256,6 @@ class NowPlaying(
 
     fun closeAmbient(dismiss: Boolean) { ambientOpen = false; viz.stop(); resetOv(); if (dismiss) ambientDismissed = true; focus() }
 
-    /** Hold OK in the music view: on the next-preset button it opens the picker. True when it did. */
-    fun hold(): Boolean {
-        if (!ambientOpen || !vizLive || hidden) return false
-        lastKeyAt = SystemClock.uptimeMillis()
-        if (items().getOrNull(ambBtn) != "preset") return false
-        onPick?.invoke(); return true
-    }
 
     fun press() {
         val t = track ?: return
@@ -261,7 +265,8 @@ class NowPlaying(
             if (vizLive && hidden) { setHidden(false); return }
             val list = items(); ambBtn = ambBtn.coerceIn(0, list.size - 1)
             when (list[ambBtn]) { "prev" -> tc.skipToPrevious(); "play" -> toggle(t); "next" -> tc.skipToNext()
-                "preset" -> { onPreset?.invoke(1); return }
+                "preset" -> { onPick?.invoke(); return }
+                "fav" -> { onFav?.invoke(); changed(false); return }
                 "eye" -> { setHidden(true); return }
                 "stop" -> { stoppedKey = "${t.title}\n${t.artist}"; stopAt = SystemClock.uptimeMillis(); tc.pause(); tc.stop()
                     // an app that ignores both still gets the remote's own Pause key
@@ -372,7 +377,7 @@ class NowPlaying(
         c.drawLine(cx - size * 0.1f, cy + size * 0.3f, cx - size * 0.1f, cy - size * 0.45f, paint)
         c.drawLine(cx + size * 0.5f, cy + size * 0.1f, cx + size * 0.5f, cy - size * 0.65f, paint)
         c.drawLine(cx - size * 0.1f, cy - size * 0.45f, cx + size * 0.5f, cy - size * 0.65f, paint)
-        paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT
+        paint.style = Paint.Style.FILL; paint.strokeCap = Paint.Cap.BUTT; paint.strokeJoin = Paint.Join.MITER
     }
 
     /** One round control: a faint circle, white when focused, with its glyph. */
@@ -396,6 +401,12 @@ class NowPlaying(
             "preset" -> {   // a four-point sparkle: a new look
                 path.moveTo(cx, cy - s * 1.1f); path.quadTo(cx + s * 0.15f, cy - s * 0.15f, cx + s * 1.1f, cy); path.quadTo(cx + s * 0.15f, cy + s * 0.15f, cx, cy + s * 1.1f)
                 path.quadTo(cx - s * 0.15f, cy + s * 0.15f, cx - s * 1.1f, cy); path.quadTo(cx - s * 0.15f, cy - s * 0.15f, cx, cy - s * 1.1f); path.close()
+            }
+            "star", "starOff" -> {   // a favourite: filled when the preset is one, an outline when not
+                for (i in 0 until 10) { val a = Math.toRadians(-90.0 + i * 36.0); val r = if (i % 2 == 0) s * 1.3f else s * 0.58f
+                    val x = cx + (r * cos(a)).toFloat(); val y = cy + (r * sin(a)).toFloat(); if (i == 0) path.moveTo(x, y) else path.lineTo(x, y) }
+                path.close()
+                if (kind == "starOff") { paint.style = Paint.Style.STROKE; paint.strokeWidth = s * 0.13f; paint.strokeJoin = Paint.Join.ROUND }
             }
             "eye" -> {   // hide the buttons: an eye
                 paint.style = Paint.Style.STROKE; paint.strokeWidth = s * 0.22f; paint.strokeCap = Paint.Cap.ROUND
@@ -515,7 +526,7 @@ class NowPlaying(
             c.save(); if (f) { c.translate(cx, cy); c.scale(1.12f, 1.12f); c.translate(-cx, -cy) }
             paint.color = if (f) Color.WHITE else Color.argb(if (name == "play") 51 else 26, 255, 255, 255)
             c.drawCircle(cx, cy, r, paint)
-            glyph(c, cx, cy, r * 0.5f, if (name == "play" && t.playing) "pause" else name, if (f) Color.rgb(10, 10, 15) else Color.WHITE)
+            glyph(c, cx, cy, r * 0.5f, if (name == "play" && t.playing) "pause" else if (name == "fav") (if (favQuery?.invoke() == true) "star" else "starOff") else name, if (f) Color.rgb(10, 10, 15) else Color.WHITE)
             c.restore()
         }
         val playX = w / 2f
@@ -532,8 +543,8 @@ class NowPlaying(
         c.drawText(t.app, appL + 24 * u, btnY + 6 * u, text)
         var leftEnd = m
         if (vizLive) {
-            round("eye", m + rS, rS); round("preset", m + rS * 3 + gap, rS)
-            leftEnd = m + rS * 4 + gap + gap
+            round("eye", m + rS, rS); round("preset", m + rS * 3 + gap, rS); round("fav", m + rS * 5 + gap * 2, rS)
+            leftEnd = m + rS * 6 + gap * 3
         }
         val hy = btnY + 6 * u
         text.typeface = Fonts.regular(ctx)
@@ -547,7 +558,7 @@ class NowPlaying(
         }
         text.textAlign = Paint.Align.RIGHT
         text.textSize = 18 * u; text.color = Color.argb(150, 255, 255, 255)
-        val hint = TextUtils.ellipsize(if (items().getOrNull(ambBtn) == "preset") "Hold OK to choose a preset" else "▼ Press Down or Back for apps", text, stopX - rS - gap - (nextX + rS + gap), TextUtils.TruncateAt.END)
+        val hint = TextUtils.ellipsize(when (items().getOrNull(ambBtn)) { "preset" -> "OK to choose a preset"; "fav" -> if (favQuery?.invoke() == true) "OK removes this preset from favourites" else "OK adds this preset to favourites"; else -> "▼ Press Down or Back for apps" }, text, stopX - rS - gap - (nextX + rS + gap), TextUtils.TruncateAt.END)
         c.drawText(hint, 0, hint.length, stopX - rS - gap, hy, text)
         text.textAlign = Paint.Align.LEFT
         if (lyricsOn && !keepLyr) drawLyrics(c, w, h, u, pos)
@@ -600,6 +611,19 @@ class NowPlaying(
     }
 
     /** The lyrics, centred in the space above the cover: the line being sung large, a few before and after it fading away. Plain lyrics move along with the song. */
+    // wrapped lyric lines, kept while the song and the size stay the same (building them every frame would be slow on an older TV)
+    private val lyrCache = HashMap<Int, StaticLayout>()
+    private var lyrCacheFor: Any? = null
+    private var lyrCacheW = 0
+    private fun lyrBlock(res: Any, idx: Int, style: Int, t: String, size: Float, bold: Boolean, width: Int): StaticLayout {
+        if (lyrCacheFor !== res || lyrCacheW != width) { lyrCache.clear(); lyrCacheFor = res; lyrCacheW = width }
+        return lyrCache.getOrPut(idx * 3 + style) {
+            val tp = TextPaint(Paint.ANTI_ALIAS_FLAG)
+            tp.typeface = if (bold) Fonts.semibold(ctx) else Fonts.regular(ctx); tp.textSize = size; tp.color = Color.WHITE
+            StaticLayout.Builder.obtain(t, 0, t.length, tp, width).setAlignment(Layout.Alignment.ALIGN_CENTER).build()
+        }
+    }
+
     private fun drawLyrics(c: Canvas, w: Int, h: Int, u: Float, pos: Long, spread: Float = 0f) {
         val res = lyr
         val top = 40 * u
@@ -608,7 +632,7 @@ class NowPlaying(
         val maxW = w * 0.82f
         text.textAlign = Paint.Align.CENTER; text.letterSpacing = 0f
         if (res == null) {
-            if (!lyrDone) { text.textAlign = Paint.Align.LEFT; return }
+            if (!lyrDone || spread > 0f) { text.textAlign = Paint.Align.LEFT; return }   // with the buttons hidden there is no "no lyrics" note
             text.typeface = Fonts.regular(ctx); text.textSize = 24 * u; text.color = Color.argb(130, 255, 255, 255)
             c.drawText("No lyrics found for this song", w / 2f, (top + bottom) / 2f, text)
             text.textAlign = Paint.Align.LEFT; return
@@ -616,20 +640,31 @@ class NowPlaying(
         val l = res.lines
         val i = l.indexOfLast { it.ms <= pos }
         val cy = (top + bottom) / 2f
-        val room = (bottom - top) / 2f
-        fun row(idx: Int, dy: Float, size: Float, alpha: Int, bold: Boolean) {
-            val t = l.getOrNull(idx)?.text?.takeIf { it.isNotBlank() } ?: return
-            val y = cy + dy
-            if (y < top + size * u * 0.7f || y > bottom + size * u * 0.3f) return
-            text.typeface = if (bold) Fonts.semibold(ctx) else Fonts.regular(ctx); text.textSize = size * u; text.color = Color.argb(alpha, 255, 255, 255)
-            text.setShadowLayer(8 * u, 0f, 0f, Color.argb(alpha * 3 / 4, 0, 0, 0))
-            val e = TextUtils.ellipsize(t, text, maxW, TextUtils.TruncateAt.END)
-            c.drawText(e, 0, e.length, w / 2f, y + size * u * 0.35f, text)
-            text.clearShadowLayer()
+        val half = ((prefs.getInt("np_lyr_lines", 3).coerceIn(1, 9) - 1) / 2)   // lines either side of the current one that show large
+        val gap = 12 * u
+        val curGap = 40 * u   // more room around the current line, so it stands out from the rest
+        // 0 = the current line, 1 = the other large ones, 2 = the small context lines beyond them
+        fun styleOf(k: Int) = if (k == 0) 0 else if (k <= half) 1 else 2
+        fun make(idx: Int, k: Int): StaticLayout? {
+            val t = l.getOrNull(idx)?.text?.takeIf { it.isNotBlank() } ?: return null
+            val st = styleOf(k)
+            return lyrBlock(res, idx, st, t, (if (st == 0) 52f else if (st == 1) 40f else 28f) * u, st != 2, maxW.toInt())
         }
-        row(i, 0f, 52f, 255, true)
-        var dy = 70 * u
-        for (k in 1..4) { row(i + k, dy, 32f, (190 - k * 38).coerceAtLeast(40), false); row(i - k, -dy, 32f, (190 - k * 38).coerceAtLeast(40), false); dy += 56 * u }
+        fun paintBlock(lay: StaticLayout, k: Int, topY: Float) {
+            val st = styleOf(k)
+            val alpha = if (st == 0) 255 else if (st == 1) (235 - (k - 1) * 25).coerceAtLeast(120) else (190 - (k - half) * 38).coerceAtLeast(40)
+            lay.paint.color = Color.argb(alpha, 255, 255, 255)
+            lay.paint.setShadowLayer(8 * u, 0f, 0f, Color.argb(alpha * 3 / 4, 0, 0, 0))
+            c.save(); c.translate(w / 2f - maxW / 2f, topY); lay.draw(c); c.restore()
+        }
+        // long lines wrap to the width instead of being cut off; the blocks stack up and down from the current line
+        val cur = if (i >= 0) make(i, 0) else null
+        var upEdge = cy; var downEdge = cy
+        if (cur != null) { paintBlock(cur, 0, cy - cur.height / 2f); upEdge = cy - cur.height / 2f - curGap; downEdge = cy + cur.height / 2f + curGap }
+        var yDown = downEdge
+        for (k in 1..9) { val lay = make(i + k, k) ?: continue; if (yDown + lay.height > bottom + 20 * u) break; paintBlock(lay, k, yDown); yDown += lay.height + gap }
+        var yUp = upEdge
+        for (k in 1..9) { val lay = make(i - k, k) ?: continue; val ty = yUp - lay.height; if (ty < top - 10 * u) break; paintBlock(lay, k, ty); yUp = ty - gap }
         if (!res.synced) { text.typeface = Fonts.regular(ctx); text.textSize = 16 * u; text.color = Color.argb(110, 255, 255, 255); c.drawText("Lyrics are not timed for this song: the lines move along with it", w / 2f, bottom + 6 * u, text) }
         text.textAlign = Paint.Align.LEFT
     }

@@ -60,6 +60,11 @@ class MainActivity : Activity(), HomeActions, IdleHost, PhotoPicker {
                 }
             }
         }
+        home.vizFav = {
+            val p = getSharedPreferences("home", MODE_PRIVATE)
+            viz?.let { v -> v.nowPath.takeIf { it.isNotEmpty() }?.let { path -> PresetStore.setFav(p, listOf(path), path !in PresetStore.favs(p)); v.repool() } }
+        }
+        home.vizIsFav = { viz?.nowPath?.let { it.isNotEmpty() && it in PresetStore.favs(getSharedPreferences("home", MODE_PRIVATE)) } == true }
         home.vizStep = { d -> viz?.let { if (d > 0) it.next() else it.previous() } }
         FireWatch.ensure(this)   // only once a computer has granted WRITE_SECURE_SETTINGS over ADB
         main.postDelayed({ FireWatch.rebindIfUnbound(applicationContext) }, 10_000L)   // listed but not bound after a force-stop

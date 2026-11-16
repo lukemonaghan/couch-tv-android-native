@@ -17,7 +17,7 @@ import android.view.Window
 import android.view.WindowManager
 
 /**
- * The music view's "choose a preset" list (hold OK on the next-preset button). The same tree as Settings, Browse your presets:
+ * The music view's "choose a preset" list (OK on the preset button). The same tree as Settings, Browse your presets:
  * Favourites and the categories, then groups, then presets, but only installed ones, and OK on a preset plays it now instead of
  * turning it on or off. Back goes up a level and closes at the top. One Canvas in a translucent dialog, like [ListMenu], so the
  * visualiser stays visible around it.
@@ -42,7 +42,7 @@ object PresetPicker {
     private class PickView(ctx: Context, private val prefs: SharedPreferences, private val playing: String, private val hover: (String) -> Unit, private val changed: () -> Unit, private val done: (String?) -> Unit) : View(ctx) {
         private val index = PresetStore.index(ctx)
         private val installed = PresetStore.installed(ctx)
-        private val favs = PresetStore.favs(prefs)
+        private var favs = PresetStore.favs(prefs)
         private val off = PresetStore.off(prefs)
         private var cat: String? = null
         private var group: String? = null
@@ -78,6 +78,7 @@ object PresetPicker {
                 l += Entry("Play", if (prefs.getBoolean("viz_favs_only", false)) "Favourites only" else "Everything that is on", open = { flip("viz_favs_only", false) })
                 l += Entry("Brightness", "${prefs.getInt("viz_bright", 100)}%", open = { val b = prefs.getInt("viz_bright", 100); prefs.edit().putInt("viz_bright", if (b <= 20) 100 else b - 10).apply(); refresh() })
                 l += Entry("Hide the buttons after", prefs.getInt("viz_autohide", 0).let { if (it == 0) "Never" else "$it seconds" }, open = { cycle("viz_autohide", HIDE, 0) })
+                l += Entry("Active lyric lines", prefs.getInt("np_lyr_lines", 3).let { if (it == 1) "1 line" else "$it lines" }, open = { cycle("np_lyr_lines", LYR_LINES, 3) })
                 l += Entry("Lyrics with the buttons hidden", if (prefs.getBoolean("np_lyrics_hidden", false)) "On" else "Off", open = { flip("np_lyrics_hidden", false) })
             } else if (fav) {
                 crumb = "Favourites"
@@ -107,10 +108,19 @@ object PresetPicker {
 
         private val SECS = listOf(0, 20, 45, 90, 180)
         private val HIDE = listOf(0, 5, 10, 20, 40)
+        private val LYR_LINES = listOf(1, 3, 5, 7)
         // an option changed: rebuild the rows where they are, and tell the visualiser
         private fun refresh() { build(); invalidate(); changed() }
         private fun cycle(key: String, steps: List<Int>, def: Int) { val v = prefs.getInt(key, def); val i = steps.indexOfFirst { it > v }; prefs.edit().putInt(key, if (i < 0) steps[0] else steps[i]).apply(); refresh() }
         private fun flip(key: String, def: Boolean) { prefs.edit().putBoolean(key, !prefs.getBoolean(key, def)).apply(); refresh() }
+
+        // hold OK on a preset: star it or unstar it, here and in Settings, and tell the visualiser (favourites-only play)
+        private fun toggleFav() {
+            val path = entries.getOrNull(sel)?.play ?: return
+            PresetStore.setFav(prefs, listOf(path), path !in favs)
+            favs = PresetStore.favs(prefs)
+            build(); sel = sel.coerceAtMost((entries.size - 1).coerceAtLeast(0)); invalidate(); changed()
+        }
 
         private fun up(): Boolean {
             if (opts) { go(null, null, false); return true }
@@ -121,9 +131,14 @@ object PresetPicker {
 
         // as in ListMenu: a release only counts if this list saw its press (it opens while OK is still held)
         private var armed = false
+        private var held = false   // a long press already did its job for this press of OK
 
         override fun onKeyDown(code: Int, e: KeyEvent): Boolean {
-            if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) { if (e.repeatCount == 0) armed = true; return true }
+            if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) { 
+                if (e.repeatCount == 0) { armed = true; held = false }
+                else if (armed && !held && e.isLongPress) { held = true; toggleFav() }
+                return true
+            }
             when (code) {
                 KeyEvent.KEYCODE_DPAD_UP -> { if (sel > 0) sel--; invalidate(); preview(); return true }
                 KeyEvent.KEYCODE_DPAD_DOWN -> { if (sel < entries.size - 1) sel++; invalidate(); preview(); return true }
@@ -136,6 +151,7 @@ object PresetPicker {
             if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
                 if (!armed) return true
                 armed = false
+                if (held) { held = false; return true }
                 entries.getOrNull(sel)?.let { en -> if (en.play != null) { removeCallbacks(previewRun); done(en.play) } else en.open?.invoke() }
                 return true
             }
@@ -155,6 +171,11 @@ object PresetPicker {
             paint.style = Paint.Style.FILL
             text.typeface = Fonts.semibold(context); text.textSize = 24 * u; text.color = Color.argb(150, 255, 255, 255); text.textAlign = Paint.Align.LEFT; text.letterSpacing = 0.04f
             c.drawText(crumb.uppercase(), left + pad + 14 * u, top + 52 * u, text); text.letterSpacing = 0f
+            if (entries.getOrNull(sel)?.play != null) {
+                text.typeface = Fonts.regular(context); text.textSize = 20 * u; text.textAlign = Paint.Align.RIGHT; text.color = Color.argb(130, 255, 255, 255)
+                c.drawText("Hold OK to ★ favourite", left + w - pad - 14 * u, top + 52 * u, text); text.textAlign = Paint.Align.LEFT
+            }
+            text.typeface = Fonts.semibold(context)
             if (sel < scroll) scroll = sel
             if (sel >= scroll + fit) scroll = sel - fit + 1
             var y = top + 74 * u

@@ -88,6 +88,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
     var vizHook: ((Boolean) -> Unit)? = null
     var vizStep: ((Int) -> Unit)? = null
     var vizPick: (() -> Unit)? = null
+    var vizFav: (() -> Unit)? = null
+    var vizIsFav: (() -> Boolean)? = null
     private var vizOn = false
     fun vizLive(on: Boolean) { np.vizLive = on; invalidate() }
     fun vizName(n: String) = np.presetName(n)
@@ -110,7 +112,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         { mode == Mode.DOCK || mode == Mode.CARDS || mode == Mode.TOP || mode == Mode.NP })
     private val fx = AmbientFx(prefs, weather) { postInvalidateDelayed(40) }
     private val np = NowPlaying(ctx, prefs, { act.launch(it) }) { auto -> onNowPlaying(auto) }
-    init { np.onPreset = { vizStep?.invoke(it) }; np.onPick = { vizPick?.invoke() } }
+    init { np.onPreset = { vizStep?.invoke(it) }; np.onPick = { vizPick?.invoke() }; np.onFav = { vizFav?.invoke() }; np.favQuery = { vizIsFav?.invoke() == true } }
 
     /** The music changed: a new song may open the full screen view, and a card that has gone gives the remote back. */
     private fun onNowPlaying(auto: Boolean) {
@@ -351,6 +353,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
                 if (e.repeatCount == 0) { longHandled = false; e.startTracking() }
                 return true
             }
+            KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN -> if (mode == Mode.NP && np.channel(code == KeyEvent.KEYCODE_CHANNEL_UP)) { invalidate(); return true }   // the next and previous preset
             KeyEvent.KEYCODE_MENU -> { if (e.repeatCount == 0) cycleLook(); return true }   // temporary: becomes the look quick button
         }
         return super.onKeyDown(code, e)
@@ -530,7 +533,6 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         when (mode) {
             Mode.CARDS -> if (!cardMenu && cards().isNotEmpty()) { cardMenu = true; cardMenuPick = 0 }
             Mode.SETTINGS -> settings.hold()
-            Mode.NP -> np.hold()
             Mode.POP -> peopleUi.lift()
             Mode.DOCK -> if (fi < store.line) openMenu(fi)
             Mode.MORE -> {

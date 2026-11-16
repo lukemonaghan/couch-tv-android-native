@@ -8,7 +8,7 @@ import java.util.Locale
  * The "Music visualiser" page of Home settings: how the MilkDrop background behaves, and the preset browser.
  * Browsing goes Category, then Group, then single presets. OK on a category or group row opens it, and the first row of
  * each level downloads or removes everything in it. Nothing is installed until asked: [PresetStore] fetches only what is picked.
- * Prefs (home): np_viz, np_lyrics_hidden, viz_q, viz_fps, viz_secs, viz_bright (20 to 100), viz_autohide, viz_slow (see Visualiser.kt).
+ * Prefs (home): np_viz, np_lyrics_hidden, np_lyr_lines, viz_q, viz_fps, viz_secs, viz_bright (20 to 100), viz_autohide, viz_slow (see Visualiser.kt).
  */
 object VizSettings {
     /** "" is the top of the page; "mine" browses what is installed, "favs" lists the favourites, "skipped" the presets that were skipped as too slow, "get" browses the whole collection to download. */
@@ -24,6 +24,7 @@ object VizSettings {
     private val QUALITY = listOf("Fast (640 x 360)", "Normal (960 x 540)", "Sharp (1280 x 720)")
     private val SECS = listOf(0, 20, 45, 90, 180)
     private val HIDE = listOf(0, 5, 10, 20, 40)
+    private val LYR_LINES = listOf(1, 3, 5, 7)
 
     fun reset() { area = ""; cat = null; group = null; msg = ""; previewShown = false }
 
@@ -169,10 +170,11 @@ object VizSettings {
             out += IdleSettings.Item("Show the visualiser", "MilkDrop visuals behind the music view, moving with the music", check = p.getBoolean("np_viz", true)) { p.edit().putBoolean("np_viz", !p.getBoolean("np_viz", true)).apply() }
             out += IdleSettings.Item("Picture quality", "Drawn smaller and scaled up. Lower is smoother on an older TV", QUALITY[p.getInt("viz_q", 1).coerceIn(0, 2)]) { p.edit().putInt("viz_q", (p.getInt("viz_q", 1) + 1) % 3).apply() }
             out += IdleSettings.Item("Frame rate", "30 is easier on the TV", "${p.getInt("viz_fps", 30)} per second") { p.edit().putInt("viz_fps", if (p.getInt("viz_fps", 30) == 30) 60 else 30).apply() }
-            out += IdleSettings.Item("New preset every", "Left and right change it by hand", SECS.let { s -> val v = p.getInt("viz_secs", 45); if (v == 0) "Only by hand" else if (v >= 60) "${v / 60} min${if (v % 60 != 0) " ${v % 60} s" else ""}" else "$v seconds" }) { p.edit().putInt("viz_secs", next(SECS, p.getInt("viz_secs", 45))).apply() }
-            out += IdleSettings.Item("Brightness", "How bright the visualiser is. With the buttons hidden, up and down change it", "${p.getInt("viz_bright", 100)}%") { val b = p.getInt("viz_bright", 100); p.edit().putInt("viz_bright", if (b <= 20) 100 else b - 10).apply() }
+            out += IdleSettings.Item("New preset every", "Channel up and down change it by hand", SECS.let { s -> val v = p.getInt("viz_secs", 45); if (v == 0) "Only by hand" else if (v >= 60) "${v / 60} min${if (v % 60 != 0) " ${v % 60} s" else ""}" else "$v seconds" }) { p.edit().putInt("viz_secs", next(SECS, p.getInt("viz_secs", 45))).apply() }
+            out += IdleSettings.Item("Brightness", "How bright the visualiser is. With the buttons hidden, left and right change it", "${p.getInt("viz_bright", 100)}%") { val b = p.getInt("viz_bright", 100); p.edit().putInt("viz_bright", if (b <= 20) 100 else b - 10).apply() }
             out += IdleSettings.Item("Hide the buttons after", "Fades the words and buttons so only the visualiser shows. Any key brings them back", p.getInt("viz_autohide", 0).let { if (it == 0) "Never" else "$it seconds" }) { p.edit().putInt("viz_autohide", next(HIDE, p.getInt("viz_autohide", 0))).apply() }
             out += IdleSettings.Item("Lyrics with the buttons hidden", "Keep the lyrics showing, in the middle of the screen, when the buttons are hidden. Needs Show lyrics on", check = p.getBoolean("np_lyrics_hidden", false)) { p.edit().putBoolean("np_lyrics_hidden", !p.getBoolean("np_lyrics_hidden", false)).apply() }
+            out += IdleSettings.Item("Active lyric lines", "How many lines show large: the current one, and the ones before and after it. The rest show smaller. Long lines wrap", p.getInt("np_lyr_lines", 3).let { if (it == 1) "1 line" else "$it lines" }) { p.edit().putInt("np_lyr_lines", next(LYR_LINES, p.getInt("np_lyr_lines", 3))).apply() }
             out += IdleSettings.Item("Skipped presets", "Ones that ran too slowly or failed on this TV. OK to see them and let any try again", "${skipped.size}") { go("skipped", null, null) }
 
             if (installed.isNotEmpty()) {
@@ -249,11 +251,11 @@ object VizSettings {
         if (path in PresetStore.favs(p)) lines += "★ Favourite"
         if (path in PresetStore.off(p)) lines += "Turned off: never played"
         val slow = path in (p.getStringSet("viz_slow", emptySet()) ?: emptySet())
-        if (slow) lines += "Skipped: too slow or failed on this TV"
+        if (slow) lines += "Skipped: too slow or failed on this TV. The preview is small and slow"
         var play: String? = null
         if (path !in installed) lines += "Not on this TV yet. OK downloads it"
         else if (!ProjectM.available || !PresetStore.texturesInstalled(ctx)) lines += "Download the textures to see a preview"
-        else if (!slow) play = path
+        else play = path
         return Panel(path.substringAfterLast('/').removeSuffix(".milk"), parts.take(2).joinToString("  ›  "), lines, play)
     }
 }
