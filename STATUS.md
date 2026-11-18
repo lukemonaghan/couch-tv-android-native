@@ -78,3 +78,9 @@ Seeded prefs by writing `shared_prefs/home.xml` (script idea: push XML to /data/
 - Music view buttons: play/pause exactly centred with previous and next; eye and next-preset (with the preset name) on the left; hint, stop and the app button on the right. Lyrics can stay up, centred on the screen, when the buttons are hidden (Settings, "Lyrics with the buttons hidden"). There are no EQ bars any more (they shrank to fit their space).
 - Settings, Music visualiser: "Browse your presets" (installed only: category, group, preset), "Favourites", and "Play: everything that is on / favourites only". OK on a preset opens Add to favourites, Turn off and Remove. A turned-off preset is never played. A live 320 x 180 preview of the focused preset sits beside the list (PresetPreview.kt, z-on-top GLSurfaceView, 20 fps); presets that are skipped or not installed show text instead.
 - Prefs: viz_fav, viz_off, viz_favs_only, np_lyrics_hidden. Not yet tried on a real TV.
+
+## Home first, music-view clock (2026-11-18)
+- Music that is already playing when the TV wakes or tvhome comes to the front no longer opens the music view by itself (`NowPlaying.adopt`). A new song still does.
+- Settings, "Clock on music view" (pref `np_clock`, off by default): a small clock top right in the music view (`HomeView.drawSmallClock`).
+- Pushed this debug build to the Bedroom (<tv-ip>), Kogan (<tv-ip>) and the TCL lounge room TV (<tv-ip>) with adb. Not yet checked on screen. Reinstalling may switch the Home button accessibility service off again.
+- The lounge room TV is a TCL Smart TV Pro (id "living"), found by `scripts/find-tvs.py`. It is not in the couch-tv `config.json`.

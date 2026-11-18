@@ -28,6 +28,8 @@ A full-screen player for whatever is playing (Spotify and other apps that show a
 - **Presets:** Channel Up and Down move to the next or previous preset. The preset stays put between visits to the music view,
   and with "Only by hand" it never changes by itself.
 - **★ favourite** the preset that is playing, and play favourites only if you like.
+- **Clock:** Settings, "Clock on music view" shows a small clock in the top right corner (off by default), for when you are watching or listening before you have to leave.
+- The music view does not open by itself when the TV turns on or you press Home with music already playing: you land on Home. It opens by itself only for a new song.
 
 ![Music view with the buttons hidden: lyrics over the visualiser](docs/screenshots/music-hidden.jpg)
 
