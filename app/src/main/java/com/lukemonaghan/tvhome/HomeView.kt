@@ -687,6 +687,17 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { sceneKey = ""; super.onSizeChanged(w, h, ow, oh) }
 
+    /** The clock in the corner of the full screen music view (Settings, "Clock on music view"). */
+    private fun drawSmallClock(c: Canvas, u: Float) {
+        val cal = Calendar.getInstance()
+        val h24 = when (prefs.getInt("clock", 0)) { 1 -> false; 2 -> true; else -> DateFormat.is24HourFormat(context) }
+        val t = clockText(cal) + (if (h24) "" else if (cal.get(Calendar.HOUR_OF_DAY) < 12) " am" else " pm")
+        text.typeface = Fonts.semibold(context); text.textSize = 40 * u; text.textAlign = Paint.Align.RIGHT
+        text.color = Color.WHITE; text.setShadowLayer(16 * u, 0f, 2 * u, Color.argb(160, 0, 0, 0))
+        c.drawText(t, width - 56 * u, 78 * u, text)
+        text.clearShadowLayer(); text.color = ink
+    }
+
     private fun clockText(cal: Calendar): String {
         val h24 = when (prefs.getInt("clock", 0)) { 1 -> false; 2 -> true; else -> DateFormat.is24HourFormat(context) }
         return DateFormat.format(if (h24) "HH:mm" else "h:mm", cal).toString()
@@ -774,7 +785,7 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
         if (mode == Mode.SMART) { smart.draw(c, width, height); return }
         val wantViz = np.ambientOpen && np.vizWanted()
         if (wantViz != vizOn) { vizOn = wantViz; if (!wantViz) np.vizLive = false; vizHook?.invoke(wantViz) }
-        if (np.ambientOpen) { np.drawAmbient(c, width, height, u); if (np.animating) postInvalidateOnAnimation() else postInvalidateDelayed(100); return }
+        if (np.ambientOpen) { np.drawAmbient(c, width, height, u); if (prefs.getBoolean("np_clock", false)) drawSmallClock(c, u); if (np.animating) postInvalidateOnAnimation() else postInvalidateDelayed(100); return }
         if (mode == Mode.MORE || (mode == Mode.MENU && menuFrom == Mode.MORE) || solid) {
             c.drawColor(when { look == Look.DARK -> Color.rgb(20, 22, 29); look == Look.OLED && mode != Mode.MORE -> Color.BLACK; else -> ground })
         } else {

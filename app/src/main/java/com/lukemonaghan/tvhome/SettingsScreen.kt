@@ -104,6 +104,9 @@ class SettingsScreen(
                 Row("Clock", "", when (prefs.getInt("clock", 0)) { 1 -> "12 hour"; 2 -> "24 hour"; else -> "Follow the TV" }) {
                     prefs.edit().putInt("clock", (prefs.getInt("clock", 0) + 1) % 3).apply()
                 },
+                Row("Clock on music view", "", if (prefs.getBoolean("np_clock", false)) "On" else "Off") {
+                    prefs.edit().putBoolean("np_clock", !prefs.getBoolean("np_clock", false)).apply()
+                },
             ) + lookSet.rows().map { it.row() }
         }
         "Apps" -> {

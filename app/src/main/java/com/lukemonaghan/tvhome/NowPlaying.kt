@@ -129,9 +129,11 @@ class NowPlaying(
         override fun run() { refresh(); if (started) main.postDelayed(this, 3000L) }
     }
 
+    private var adopt = false
     fun start() {
         if (started) return
         started = true
+        adopt = true   // music already playing when the TV wakes or we come to the front is not a new song: stay on Home
         MediaListener.ensure(ctx)
         main.post(poll)
     }
@@ -176,7 +178,8 @@ class NowPlaying(
             lastTrackKey = key; ambientDismissed = false; lyr = null; lyrDone = false; trackAt = SystemClock.uptimeMillis()
             if (lyricsOn) Lyrics.fetch(artist, title, album, (dur / 1000).toInt()) { l -> main.post { if (lastTrackKey == key) { lyr = l; lyrDone = true; changed(false) } } }
         }
-        val auto = newTrack && ambientOn && !ambientDismissed
+        val auto = newTrack && ambientOn && !ambientDismissed && !adopt
+        adopt = false
         if (auto) { val wasOpen = ambientOpen; if (!wasOpen) { resetOv(); ambBtn = playIdx() }; ambientOpen = true }   // already open: a new song leaves the focus on its button and the buttons hidden if they were
         changed(auto)
     }
