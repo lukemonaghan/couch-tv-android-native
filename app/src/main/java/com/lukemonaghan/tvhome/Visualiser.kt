@@ -22,7 +22,7 @@ import kotlin.math.sin
  * A preset that comes in under about 14 frames a second, fails to load, or crashes the app (noticed on the next start) goes
  * on a skip list in the "viz_slow" pref and is not played again on this TV.
  * Prefs (home): viz_q (0 fast 640x360, 1 normal 960x540, 2 sharp 1280x720), viz_fps (30 or 60), viz_secs (seconds per preset, 0 = only on a key),
- * viz_slow, viz_off (turned off in Settings), viz_fav and viz_favs_only (play only the favourites), viz_last and viz_last_at (the preset to carry on with when the music view opens again), viz_loading (the preset being loaded: still set on the next start means it crashed).
+ * viz_slow, viz_off (turned off in Settings), viz_fav and viz_favs_only (play only the favourites), viz_last and viz_last_ms (the preset to carry on with when the music view opens again, and how long it had played), viz_loading (the preset being loaded: still set on the next start means it crashed).
  */
 class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val audio: AudioViz, private val onFirstFrame: () -> Unit,
                  private val onPreset: (String) -> Unit) : GLSurfaceView(ctx) {
@@ -92,22 +92,22 @@ class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val
 
         override fun onSurfaceChanged(g: GL10?, width: Int, height: Int) { ProjectM.resize(width, height) }
 
-        // The music view opening again (or the surface being made again) carries on with the preset it had, not a new one. A timer, if set, keeps counting from where it was.
+        // The music view opening again (Down to the home and Up, an app and back, the TV waking) always carries on with the
+        // preset it had. A timer, if set, carries on from how long the preset had played: time away does not count.
         private fun resume(): Boolean {
             val last = prefs.getString("viz_last", null) ?: return false
             if (!File(root, last).exists() || last in slow() || last in PresetStore.off(prefs)) return false
             val secs = prefs.getInt("viz_secs", 45)
-            val age = (System.currentTimeMillis() - prefs.getLong("viz_last_at", 0L)).coerceAtLeast(0L)
-            if (secs > 0 && age > secs * 1000L) return false
+            val played = prefs.getLong("viz_last_ms", 0L).coerceIn(0L, maxOf(0L, secs * 1000L - 5000L))   // at least 5 s more of it
             pos = order.indexOf(last).coerceAtLeast(-1)
             history.add(last)
             play(last, false)
-            loadedAt = SystemClock.uptimeMillis() - age
+            loadedAt = SystemClock.uptimeMillis() - played
             return true
         }
 
         private fun play(path: String, save: Boolean = true) {
-            if (save) prefs.edit().putString("viz_last", path).putLong("viz_last_at", System.currentTimeMillis()).apply()
+            if (save) prefs.edit().putString("viz_last", path).putLong("viz_last_ms", 0L).apply()
             prefs.edit().putString("viz_loading", path).commit()
             ProjectM.load(File(root, path).path, current.isNotEmpty())
             current = path; nowPath = path; loadedAt = SystemClock.uptimeMillis(); judgeFrom = if (path in slow()) Long.MAX_VALUE / 2 else loadedAt + 1500;   // a skipped preset picked by hand is not judged again; framesSince = 0; frames = 0
@@ -156,6 +156,7 @@ class Visualiser(ctx: Context, private val prefs: SharedPreferences, private val
             if (err != 0) Log.w("tvhome", "visualiser GL error $err in $current")
             frames++; framesSince++
             if (frames == 60) prefs.edit().remove("viz_loading").apply()   // it ran: not a crash
+            if (frames % 150 == 0 && current.isNotEmpty()) prefs.edit().putLong("viz_last_ms", now - loadedAt).apply()   // how long it has played, for resume()
             if (!shownFirst && frames >= 3) { shownFirst = true; main.post { onFirstFrame() } }
             // too slow on this TV: skip it for good
             if (now > judgeFrom + 4000 && current.isNotEmpty()) {
