@@ -778,6 +778,8 @@ class HomeView(ctx: Context, private val store: AppStore, private val act: HomeA
 
     private fun drawHome(c: Canvas) {
         val u = height / 1080f
+        // the music view holds off the screensaver and sleep while music plays (Settings, "Keep the TV awake for music")
+        keepScreenOn = np.ambientOpen && np.track?.playing == true && prefs.getBoolean("np_awake", true)
         if (VizSettings.previewShown && mode != Mode.SETTINGS) settings.closePreview()
         if (screenOff) { if (over.drawScreenOff(c, width, height, u, android.os.SystemClock.uptimeMillis() - screenOffAt, "Press any button to wake")) postInvalidateOnAnimation(); return }
         if (mode == Mode.KIDS) { kids.draw(c, width, height); return }

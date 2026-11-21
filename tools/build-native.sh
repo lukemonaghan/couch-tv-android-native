@@ -18,7 +18,8 @@ NDK=${NDK:-$(ls -d "$ANDROID_HOME"/ndk/* | sort | tail -1)}
 FORK=https://github.com/lukemonaghan/projectm.git
 FORK_COMMIT=e4d1f00d     # branch up-es2
 SRC="$ROOT/build/native/projectm"
-BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+HOST=$(ls "$NDK/toolchains/llvm/prebuilt" | head -1)   # linux-x86_64 or darwin-x86_64
+BIN="$NDK/toolchains/llvm/prebuilt/$HOST/bin"
 ABIS=${*:-armeabi-v7a arm64-v8a x86}
 
 if [ ! -d "$SRC/.git" ]; then mkdir -p "$ROOT/build/native"; git clone -q "$FORK" "$SRC"; fi
@@ -39,12 +40,12 @@ for ABI in $ABIS; do
   cmake -S "$SRC" -B "$B" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" -DANDROID_ABI="$ABI" \
     -DANDROID_PLATFORM=android-23 -DANDROID_STL=c++_shared -DCMAKE_BUILD_TYPE=Release -DENABLE_GLES2=ON \
     -DENABLE_SYSTEM_PROJECTM_EVAL=OFF -DENABLE_PLAYLIST=OFF -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF > /dev/null
-  cmake --build "$B" -j"$(nproc)" > /dev/null
+  cmake --build "$B" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)" > /dev/null
   OUT="$ROOT/app/src/main/jniLibs/$ABI"; mkdir -p "$OUT"
   "$BIN/llvm-strip" -o "$OUT/libprojectM-4.so" "$B/src/libprojectM/libprojectM-4.so"
   "$BIN/${CC}-clang++" -shared -fPIC -O2 -std=c++17 -I"$SRC/src/api/include" -I"$B/src/api/include" \
     -o "$OUT/libpmbridge.so" "$ROOT/native/pmbridge.cpp" -L"$B/src/libprojectM" -lprojectM-4 -lGLESv2 -llog
   "$BIN/llvm-strip" "$OUT/libpmbridge.so"
-  cp "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$SYS/libc++_shared.so" "$OUT/"
+  cp "$NDK/toolchains/llvm/prebuilt/$HOST/sysroot/usr/lib/$SYS/libc++_shared.so" "$OUT/"
   ls -la "$OUT" | tail -3
 done

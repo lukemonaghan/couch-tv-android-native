@@ -107,6 +107,9 @@ class SettingsScreen(
                 Row("Clock on music view", "", if (prefs.getBoolean("np_clock", false)) "On" else "Off") {
                     prefs.edit().putBoolean("np_clock", !prefs.getBoolean("np_clock", false)).apply()
                 },
+                Row("Keep the TV awake for music", "", if (prefs.getBoolean("np_awake", true)) "On" else "Off") {
+                    prefs.edit().putBoolean("np_awake", !prefs.getBoolean("np_awake", true)).apply()
+                },
             ) + lookSet.rows().map { it.row() }
         }
         "Apps" -> {
